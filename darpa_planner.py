@@ -221,6 +221,20 @@ class TaskAuctioneer:
         return [t for t in self._tasks
                 if not t.completed and t.assigned_to is None]
 
+    def sweep_completions(self, known_map: "KnownMap") -> int:
+        """
+        Call check_completion on every unfinished task.  Cells that were
+        observed as collateral while the agent navigated to another target
+        are marked done here, before the next auction, so they are never
+        assigned unnecessarily.
+        Returns the number of tasks newly marked complete.
+        """
+        count = 0
+        for task in self._tasks:
+            if not task.completed and task.check_completion(known_map):
+                count += 1
+        return count
+
     def stats(self) -> str:
         total    = len(self._tasks)
         done     = sum(1 for t in self._tasks if t.completed)
@@ -840,9 +854,18 @@ def run_simulation(max_steps: int = 200, verbose: bool = True) -> KnownMap:
         if new_tasks and verbose:
             print(f"  [FRONTIER] +{new_tasks} exploration task(s) queued")
 
-        # 3. Check passive task completions ──────────────────────────────
+        # 2b. Sweep all queued tasks for collateral observations ──────────
+        # Cells passed through en-route to another target may already be
+        # observed; mark them done now so they are never auctioned.
+        swept = auctioneer.sweep_completions(known_map)
+        if swept and verbose:
+            print(f"  [SWEPT]   {swept} task(s) observed as collateral")
+
+        # 3. Check whether any agent's current task was just completed ────
+        # Use .completed directly — sweep_completions already called
+        # check_completion (which only fires once) for all tasks.
         for agent in agents:
-            if agent.current_task and agent.current_task.check_completion(known_map):
+            if agent.current_task and agent.current_task.completed:
                 print(f"  [TASK ✓] Agent {agent.id} finished task"
                       f" {agent.current_task.task_id}"
                       f"  (observed {agent.current_task.target_loc})")
@@ -878,6 +901,7 @@ def run_simulation(max_steps: int = 200, verbose: bool = True) -> KnownMap:
         # 7. Termination ─────────────────────────────────────────────────
         if auctioneer.all_complete and all(a.status == AgentStatus.IDLE
                                            for a in agents):
+            vis.update(known_map, agents, step, auctioneer.stats())
             print(f"\n[DONE] All {auctioneer.stats()} — finished in {step + 1} steps.")
             break
 
