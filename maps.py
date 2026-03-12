@@ -8,6 +8,7 @@ Map representations for the DARPA exploration simulation.
 """
 
 from enum import Enum, auto
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 
@@ -111,7 +112,7 @@ class KnownMap:
 # Scenario factory
 # ===========================================================================
 
-def build_default_scenario() -> Tuple[GroundTruthMap, int, int]:
+def build_default_scenario() -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
     """
     10 × 10 map with two obstacle clusters.  The full map is initially
     hidden from agents; they must explore to reveal it.
@@ -129,9 +130,7 @@ def build_default_scenario() -> Tuple[GroundTruthMap, int, int]:
         . . . . . . . . . .    row 8
         . . . . . . . . . .    row 9
 
-    Agent starts at (0, 0).
-
-    EXTEND: load from file, randomise obstacles, add multiple agents, …
+    Returns the ground-truth map and a list of agent start positions.
     """
     rows, cols = 10, 10
     obstacle_locs = {(1, 3), (2, 3), (3, 3), (6, 7), (7, 7)}
@@ -139,4 +138,48 @@ def build_default_scenario() -> Tuple[GroundTruthMap, int, int]:
         [((r, c) in obstacle_locs) for c in range(cols)]
         for r in range(rows)
     ]
-    return GroundTruthMap(grid), rows, cols
+    return GroundTruthMap(grid), [(0, 0)]
+
+
+def load_scenario(path: str) -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
+    """
+    Load a scenario from a text file.
+
+    File format
+    -----------
+    Line 1          : <rows> <cols>
+    Lines 2..rows+1 : space-separated cells — '@' obstacle, '.' free
+    Line rows+2     : <num_agents>
+    Lines rows+3..  : <start_row> <start_col> <goal_row> <goal_col>
+                      (goal coordinates are recorded but not used)
+
+    Example (maps/exp0.txt):
+        4 7
+        @ @ @ @ @ @ @
+        @ . . . . . @
+        @ @ @ . @ @ @
+        @ @ @ @ @ @ @
+        2
+        1 1 1 5
+        1 2 1 4
+    """
+    lines = Path(path).read_text().splitlines()
+    it = (ln for ln in lines if ln.strip())   # skip blank lines
+
+    rows, cols = map(int, next(it).split())
+
+    grid: List[List[bool]] = []
+    for _ in range(rows):
+        tokens = next(it).split()
+        # Support both compact ("@@@..") and space-separated ("@ @ @") formats.
+        cells = list(tokens[0]) if len(tokens) == 1 else tokens
+        grid.append([cell == '@' for cell in cells])
+
+    num_agents = int(next(it))
+    agent_starts: List[Tuple[int, int]] = []
+    for _ in range(num_agents):
+        sr, sc, *_ = map(int, next(it).split())
+        agent_starts.append((sr, sc))
+
+    return GroundTruthMap(grid), agent_starts
+

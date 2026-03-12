@@ -156,7 +156,7 @@ class Agent:
         self,
         agent_id:   int,
         start:      Tuple[int, int],
-        obs_radius: int = 2,
+        obs_radius: int = 1,
     ) -> None:
         self.id            = agent_id
         self.pos           = start

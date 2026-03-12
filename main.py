@@ -12,13 +12,16 @@ Module layout
   tasks.py       – Task, ExplorationTask, TaskAuctioneer
   agents.py      – AgentStatus, EventType, Event, plan_path, Agent
   visualizer.py  – SimulationVisualizer
-  darpa_planner  – run_simulation() (this file)
+  main.py        – run_simulation() (this file)
 
 Extension points are marked with  # EXTEND:  comments throughout.
 """
 
+import argparse
+from typing import Optional
+
 from agents import Agent, AgentStatus, EventType
-from maps import KnownMap, build_default_scenario
+from maps import KnownMap, build_default_scenario, load_scenario
 from tasks import TaskAuctioneer
 from visualizer import SimulationVisualizer
 
@@ -27,9 +30,19 @@ from visualizer import SimulationVisualizer
 # Simulation event loop
 # ===========================================================================
 
-def run_simulation(max_steps: int = 200, verbose: bool = True) -> KnownMap:
+def run_simulation(
+    path:      Optional[str] = None,
+    max_steps: int           = 200,
+    verbose:   bool          = True,
+) -> KnownMap:
     """
     Main event loop.  Terminates when the task queue is exhausted.
+
+    Parameters
+    ----------
+    path      : path to a scenario file; uses the built-in default map if None.
+    max_steps : hard step limit before timing out.
+    verbose   : print per-step diagnostics.
 
     Per-timestep order:
       1. Each agent observes surroundings            → KnownMap updated
@@ -41,20 +54,23 @@ def run_simulation(max_steps: int = 200, verbose: bool = True) -> KnownMap:
       7. Termination check
 
     Returns the final KnownMap (useful for post-run analysis).
-
-    EXTEND: shared KnownMap with comms, CBS conflict resolution,
-            multiple agents with capability constraints, visualisation, …
     """
-    ground_truth, rows, cols = build_default_scenario()
+    if path is not None:
+        ground_truth, agent_starts = load_scenario(path)
+    else:
+        ground_truth, agent_starts = build_default_scenario()
+
+    rows, cols = ground_truth.rows, ground_truth.cols
     known_map  = KnownMap(rows, cols)
     auctioneer = TaskAuctioneer()
 
-    start  = (0, 0)
-    agents = [Agent(agent_id=0, start=start, obs_radius=2)]
+    agents = [Agent(agent_id=i, start=start, obs_radius=2)
+              for i, start in enumerate(agent_starts)]
 
     print("=" * 52)
     print("  DARPA Exploration Simulation  (task-queue driven)")
-    print(f"  Agent 0 starts at {start}   map {rows}×{cols}")
+    print(f"  {len(agents)} agent(s)   map {rows}×{cols}"
+          + (f"   [{path}]" if path else ""))
     print("=" * 52)
 
     vis = SimulationVisualizer(ground_truth)
@@ -149,4 +165,13 @@ def run_simulation(max_steps: int = 200, verbose: bool = True) -> KnownMap:
 
 # ===========================================================================
 if __name__ == "__main__":
-    run_simulation(max_steps=200, verbose=True)
+    parser = argparse.ArgumentParser(description="DARPA exploration simulation")
+    parser.add_argument("path", nargs="?", default=None,
+                        help="scenario file to load (default: built-in 10×10 map)")
+    parser.add_argument("--steps", type=int, default=200, metavar="N",
+                        help="maximum simulation steps (default: 200)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress per-step output")
+    args = parser.parse_args()
+    run_simulation(path=args.path, max_steps=args.steps, verbose=not args.quiet)
+

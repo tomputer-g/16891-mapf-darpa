@@ -6,7 +6,7 @@ Live matplotlib visualizer for the DARPA exploration simulation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Dict, List
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,6 +17,12 @@ from maps import GroundTruthMap, KnownMap, ObservationState
 
 if TYPE_CHECKING:
     from agents import Agent
+
+# Cycle through these for agent colours; fall back to random HSV beyond len.
+_AGENT_PALETTE = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+    "#42d4f4", "#f032e6", "#bfef45", "#fabed4", "#469990",
+]
 
 
 class SimulationVisualizer:
@@ -87,27 +93,13 @@ class SimulationVisualizer:
                                       extent=ext, interpolation="nearest",
                                       zorder=3)
 
-        # Path line
-        self._path_line, = self.ax.plot(
-            [], [], "--", color="#00cfff", linewidth=1.8,
-            alpha=0.85, zorder=4, label="Planned path")
-
-        # Task target star
-        self._task_dot, = self.ax.plot(
-            [], [], "*", color="#ffd700", markersize=18,
-            markeredgecolor="#7a5200", markeredgewidth=0.8,
-            zorder=5, label="Task target")
-
-        # Agent circle
-        self._agent_dot, = self.ax.plot(
-            [], [], "o", color="#00ff88", markersize=13,
-            markeredgecolor="black", markeredgewidth=1.0,
-            zorder=6, label="Agent")
+        # Per-agent artists created lazily in _create_agent_artists()
+        self._agent_artists: Dict[int, dict] = {}
 
         self._title = self.ax.set_title(
             "Initialising…", color="white", fontsize=10, pad=8)
 
-        self._build_legend()
+        self._legend_handle = self._build_legend([])
         plt.tight_layout()
         self.fig.canvas.draw()
         plt.pause(0.01)
@@ -146,8 +138,8 @@ class SimulationVisualizer:
 
     # ── Legend ───────────────────────────────────────────────────────────
 
-    def _build_legend(self) -> None:
-        elements = [
+    def _build_legend(self, agents: List[Agent]) -> None:
+        elements: list = [
             mpatches.Patch(facecolor=self._KN_FREE[:3],
                            edgecolor="#aaa", label="Free (mapped)"),
             mpatches.Patch(facecolor=self._KN_OBS[:3],
@@ -156,19 +148,46 @@ class SimulationVisualizer:
                            edgecolor="#888", label="Free (unknown)"),
             mpatches.Patch(facecolor=self._GT_OBS[:3],  alpha=0.55,
                            edgecolor="#888", label="Obstacle (unknown)"),
-            Line2D([0], [0], color="#00cfff", linestyle="--",
-                   linewidth=1.8, label="Planned path"),
-            Line2D([0], [0], marker="*", color="#ffd700",
-                   markeredgecolor="#7a5200", markersize=13,
-                   linestyle="None", label="Task target"),
-            Line2D([0], [0], marker="o", color="#00ff88",
-                   markeredgecolor="black", markersize=10,
-                   linestyle="None", label="Agent"),
         ]
+        if agents:
+            elements.append(Line2D(
+                [0], [0], marker="o", color=_AGENT_PALETTE[0],
+                markeredgecolor="black", markersize=9,
+                linestyle="--", linewidth=1.5,
+                label=f"Agents (×{len(agents)})"))
+        if hasattr(self, "_legend_handle") and self._legend_handle:
+            self._legend_handle.remove()
         legend = self.ax.legend(
             handles=elements, loc="upper right", fontsize=7.5,
             facecolor="#222244", edgecolor="#555577", labelcolor="white")
         legend.set_zorder(10)
+        self._legend_handle = legend
+
+    def _create_agent_artists(self, agent: Agent) -> None:
+        """Lazily create path/target/dot/label artists for a new agent."""
+        idx   = len(self._agent_artists)
+        color = _AGENT_PALETTE[idx % len(_AGENT_PALETTE)]
+
+        path_line, = self.ax.plot(
+            [], [], "--", color=color, linewidth=1.6, alpha=0.85, zorder=4)
+        task_dot, = self.ax.plot(
+            [], [], "*", color=color, markersize=16,
+            markeredgecolor="black", markeredgewidth=0.8, zorder=5)
+        agent_dot, = self.ax.plot(
+            [], [], "o", color=color, markersize=12,
+            markeredgecolor="black", markeredgewidth=1.0, zorder=6)
+        label = self.ax.text(
+            0, 0, str(agent.id),
+            color="white", fontsize=6, fontweight="bold",
+            ha="center", va="center", zorder=7)
+
+        self._agent_artists[agent.id] = {
+            "color":     color,
+            "path":      path_line,
+            "target":    task_dot,
+            "dot":       agent_dot,
+            "label":     label,
+        }
 
     # ── Public interface ─────────────────────────────────────────────────
 
@@ -183,28 +202,37 @@ class SimulationVisualizer:
         self._update_knowledge_layer(known_map)
         self._update_fog_layer(known_map)
 
-        # Path (first agent only; extend loop for multi-agent)
-        agent = agents[0]
-        if len(agent.path) > 1:
-            self._path_line.set_data(
-                [p[1] for p in agent.path],   # col → x
-                [p[0] for p in agent.path])   # row → y
-        else:
-            self._path_line.set_data([], [])
+        legend_dirty = False
+        for agent in agents:
+            if agent.id not in self._agent_artists:
+                self._create_agent_artists(agent)
+                legend_dirty = True
 
-        # Task target
-        if agent.current_task and not agent.current_task.completed:
-            tr, tc = agent.current_task.target_loc
-            self._task_dot.set_data([tc], [tr])
-        else:
-            self._task_dot.set_data([], [])
+            arts = self._agent_artists[agent.id]
 
-        # Agent position
-        self._agent_dot.set_data([agent.pos[1]], [agent.pos[0]])
+            # Path
+            if len(agent.path) > 1:
+                arts["path"].set_data(
+                    [p[1] for p in agent.path],   # col → x
+                    [p[0] for p in agent.path])   # row → y
+            else:
+                arts["path"].set_data([], [])
 
-        # Caption
+            # Task target
+            if agent.current_task and not agent.current_task.completed:
+                tr, tc = agent.current_task.target_loc
+                arts["target"].set_data([tc], [tr])
+            else:
+                arts["target"].set_data([], [])
+
+            # Agent dot + ID label
+            arts["dot"].set_data([agent.pos[1]], [agent.pos[0]])
+            arts["label"].set_position((agent.pos[1], agent.pos[0]))
+
+        if legend_dirty:
+            self._build_legend(agents)
+
         self._title.set_text(f"Step {step}   |   {task_stats}")
-
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
         plt.pause(0.05)
