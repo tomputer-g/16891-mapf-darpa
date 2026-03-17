@@ -20,7 +20,7 @@ Extension points are marked with  # EXTEND:  comments throughout.
 import argparse
 from typing import Optional
 
-from agents import Agent, AgentStatus, EventType
+from agents import Agent, AgentStatus, EventType, Agent_Dog, Agent_Drone
 from maps import KnownMap, build_default_scenario, load_scenario
 from tasks import TaskAuctioneer
 from visualizer import SimulationVisualizer
@@ -64,7 +64,7 @@ def run_simulation(
     known_map  = KnownMap(rows, cols)
     auctioneer = TaskAuctioneer()
 
-    agents = [Agent(agent_id=i, start=start, obs_radius=2)
+    agents = [Agent_Drone(agent_id=i, start=start, obs_radius=2)
               for i, start in enumerate(agent_starts)]
 
     print("=" * 52)

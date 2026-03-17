@@ -89,18 +89,28 @@ def _dijkstra_heuristic(
                 heapq.heappush(heap, (nd, nb))
     return dist
 
+def manhattan_distance(rows, cols, goal):
+    dist = {}
+    for r in range(rows):
+        for c in range(cols):
+            dist[(r, c)] = abs(r - goal[0]) + abs(c - goal[1])
+    return dist
 
 def plan_path(
     known_map: KnownMap,
     start:     Tuple[int, int],
     goal:      Tuple[int, int],
+    drone = False
 ) -> Optional[List[Tuple[int, int]]]:
     """
     A* on the known map.  UNKNOWN cells are treated as FREE (optimistic).
     Returns a list of (row, col) positions from start to goal, or None.
     """
     grid  = known_map.to_obstacle_grid()
-    h_val = _dijkstra_heuristic(grid, goal)
+    if drone:
+        h_val = manhattan_distance(known_map.rows, known_map.cols, goal)
+    else:
+        h_val = _dijkstra_heuristic(grid, goal)
     if start not in h_val:
         return None   # goal unreachable on current known map
 
@@ -125,7 +135,7 @@ def plan_path(
         for d in range(4):
             nb = _move(loc, d)
             if (not _in_bounds(grid, nb)
-                    or not known_map.is_passable(nb)
+                    or (not known_map.is_passable(nb) and not drone)
                     or nb in closed):
                 continue
             g = curr['g'] + 1
@@ -236,3 +246,75 @@ class Agent:
         self.pos  = next_pos
         self.path = self.path[1:]
         return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+
+# ===========================================================================
+# Agent Drone
+# ===========================================================================
+
+class Agent_Drone(Agent):
+    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1):
+        super().__init__(agent_id, start, obs_radius)
+
+    def step(self, known_map: KnownMap) -> Optional[Event]:
+        """
+        Move two cells along the planned path.
+        Returns an Event or None.
+        """
+        if self.status in (AgentStatus.IDLE, AgentStatus.REPLANNING):
+            return None
+        if len(self.path) < 2:
+            return None
+
+        next_pos = self.path[1]
+        if len(self.path) < 3: 
+            next_pos = self.path[2]
+        else:
+            next_pos = self.path[1]
+
+        self.pos  = next_pos
+        if len(self.path) < 3: 
+            self.path = self.path[2:]
+        else:
+            self.path = self.path[1:]
+        
+        return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+    
+    def replan(self, known_map: KnownMap) -> bool:
+        """
+        Compute a path to current_task.target_loc via A*.
+        Returns True if a valid path was found.
+
+        EXTEND: chain tasks (TSP ordering), apply CBS constraints,
+                coordinate with teammates, honour dynamic deadlines, …
+        """
+        if self.current_task is None:
+            self.status = AgentStatus.IDLE
+            return False
+
+
+        path = plan_path(known_map, self.pos, self.current_task.target_loc, drone = True)
+        if path:
+            self.path   = path
+            self.status = AgentStatus.NAVIGATING
+            return True
+
+        # Target unreachable on current known map — wait for next auction
+        self.status = AgentStatus.IDLE
+        return False
+
+
+# ===========================================================================
+# Agent Dog
+# ===========================================================================
+
+class Agent_Dog(Agent):
+    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1):
+        super().__init__(agent_id, start, obs_radius)
+
+    def step(self, known_map: KnownMap) -> Optional[Event]:
+        """
+        Dog version of step.
+        Right now it just uses the parent behavior.
+        Later you can customize it.
+        """
+        return super().step(known_map)
