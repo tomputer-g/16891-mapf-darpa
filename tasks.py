@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
-from maps import ObservationState
+from sim_types import ObservationState
 
 if TYPE_CHECKING:
     from agents import Agent

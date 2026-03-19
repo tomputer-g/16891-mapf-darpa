@@ -13,7 +13,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
-from maps import GroundTruthMap, KnownMap, ObservationState
+from maps import GroundTruthMap, KnownMap
+from sim_types import ObservationState
 
 if TYPE_CHECKING:
     from agents import Agent
@@ -44,11 +45,17 @@ class SimulationVisualizer:
     """
 
     # ── Palette ──────────────────────────────────────────────────────────
-    _GT_FREE     = (0.85, 0.93, 0.85, 1.0)   # pale green  – GT free cell
-    _GT_OBS      = (0.12, 0.12, 0.12, 1.0)   # near-black  – GT obstacle
-    _KN_FREE     = (1.00, 1.00, 1.00, 1.0)   # white       – known free
-    _KN_OBS      = (0.22, 0.22, 0.22, 1.0)   # charcoal    – known obstacle
-    _FOG_COLOUR  = (0.55, 0.55, 0.55, 0.62)  # grey fog    – RGBA
+    _GT_FREE          = (0.85, 0.93, 0.85, 1.0)   # pale green   – GT free cell
+    _GT_OBS           = (0.12, 0.12, 0.12, 1.0)   # near-black   – GT obstacle
+    _GT_BUILDING      = (0.60, 0.75, 0.90, 1.0)   # steel blue   – unoccupied building (GT)
+    _GT_BUILDING_OCC  = (0.95, 0.60, 0.10, 1.0)   # amber        – occupied building (GT)
+    _GT_OBJECTIVE     = (0.95, 0.90, 0.10, 1.0)   # gold         – free-standing objective (GT)
+    _KN_FREE          = (1.00, 1.00, 1.00, 1.0)   # white        – known free
+    _KN_OBS           = (0.22, 0.22, 0.22, 1.0)   # charcoal     – known obstacle
+    _KN_BUILDING      = (0.75, 0.88, 1.00, 1.0)   # light blue   – unoccupied building (known)
+    _KN_BUILDING_OCC  = (1.00, 0.78, 0.35, 1.0)   # light amber  – occupied building (known)
+    _KN_OBJECTIVE     = (1.00, 0.97, 0.40, 1.0)   # light gold   – free-standing objective (known)
+    _FOG_COLOUR       = (0.55, 0.55, 0.55, 0.62)  # grey fog     – RGBA
 
     def __init__(self, ground_truth: GroundTruthMap) -> None:
         self._gt   = ground_truth
@@ -106,24 +113,41 @@ class SimulationVisualizer:
 
     # ── Image builders ───────────────────────────────────────────────────
 
+    def _gt_colour(self, r: int, c: int) -> tuple:
+        """Return the ground-truth RGBA colour for cell (r, c)."""
+        if self._gt.is_obstacle((r, c)):
+            return self._GT_OBS
+        loc = (r, c)
+        if loc in self._gt.buildings:
+            return self._GT_BUILDING_OCC if self._gt.buildings[loc] else self._GT_BUILDING
+        if loc in self._gt.objectives:
+            return self._GT_OBJECTIVE
+        return self._GT_FREE
+
     def _make_gt_image(self) -> np.ndarray:
         img = np.ones((self._rows, self._cols, 4))
         for r in range(self._rows):
             for c in range(self._cols):
-                img[r, c] = (self._GT_OBS if self._gt.is_obstacle((r, c))
-                             else self._GT_FREE)
+                img[r, c] = self._gt_colour(r, c)
         return img
+
+    def _known_colour(self, r: int, c: int, state: ObservationState) -> tuple:
+        """Return the knowledge-layer RGBA colour for an observed cell."""
+        if state == ObservationState.OBSTACLE:
+            return self._KN_OBS
+        if state == ObservationState.FREE:
+            loc = (r, c)
+            if loc in self._gt.buildings:
+                return self._KN_BUILDING_OCC if self._gt.buildings[loc] else self._KN_BUILDING
+            if loc in self._gt.objectives:
+                return self._KN_OBJECTIVE
+            return self._KN_FREE
+        return (0, 0, 0, 0)   # UNKNOWN → transparent so GT layer shows through
 
     def _update_knowledge_layer(self, known_map: KnownMap) -> None:
         for r in range(self._rows):
             for c in range(self._cols):
-                s = known_map.state[r][c]
-                if s == ObservationState.FREE:
-                    self._know_data[r, c] = self._KN_FREE
-                elif s == ObservationState.OBSTACLE:
-                    self._know_data[r, c] = self._KN_OBS
-                else:
-                    self._know_data[r, c] = (0, 0, 0, 0)   # transparent → GT visible
+                self._know_data[r, c] = self._known_colour(r, c, known_map.state[r][c])
         self._know_im.set_data(self._know_data)
 
     def _update_fog_layer(self, known_map: KnownMap) -> None:
@@ -149,6 +173,16 @@ class SimulationVisualizer:
             mpatches.Patch(facecolor=self._GT_OBS[:3],  alpha=0.55,
                            edgecolor="#888", label="Obstacle (unknown)"),
         ]
+        if self._gt.buildings:
+            elements += [
+                mpatches.Patch(facecolor=self._KN_BUILDING[:3],
+                               edgecolor="#aaa", label="Building (empty)"),
+                mpatches.Patch(facecolor=self._KN_BUILDING_OCC[:3],
+                               edgecolor="#aaa", label="Building (occupied)"),
+            ]
+        if self._gt.objectives:
+            elements.append(mpatches.Patch(facecolor=self._KN_OBJECTIVE[:3],
+                                           edgecolor="#aaa", label="Objective"))
         if agents:
             elements.append(Line2D(
                 [0], [0], marker="o", color=_AGENT_PALETTE[0],

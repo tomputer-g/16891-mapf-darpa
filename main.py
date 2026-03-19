@@ -20,8 +20,9 @@ Extension points are marked with  # EXTEND:  comments throughout.
 import argparse
 from typing import Optional
 
-from agents import Agent, AgentStatus, EventType
-from maps import KnownMap, build_default_scenario, load_scenario
+from agents import DroneAgent, GroundAgent
+from maps import KnownMap, load_new_scenario
+from sim_types import AgentStatus, AgentType, EventType
 from tasks import TaskAuctioneer
 from visualizer import SimulationVisualizer
 
