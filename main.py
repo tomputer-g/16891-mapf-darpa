@@ -5,8 +5,9 @@ DARPA Multi-Agent Exploration Simulation — top-level event loop.
 import argparse
 from typing import Optional
 
-from agents import AgentStatus, EventType, Agent_Dog, Agent_Drone
-from maps import KnownMap, build_default_scenario, load_scenario
+from agents import DroneAgent, GroundAgent
+from maps import KnownMap, load_new_scenario
+from sim_types import AgentStatus, AgentType, EventType
 from tasks import TaskAuctioneer
 from visualizer import SimulationVisualizer
 
@@ -44,21 +45,23 @@ def _post_observation_updates(agents, auctioneer, known_map, verbose: bool) -> N
 
 
 def run_simulation(
-    path: Optional[str] = None,
+    path: Optional[str] = "generated/darpa1.txt",
     max_steps: int = 200,
     verbose: bool = True,
 ) -> KnownMap:
-    if path is not None:
-        ground_truth, agent_starts = load_scenario(path)
-    else:
-        ground_truth, agent_starts = build_default_scenario()
+    
+    ground_truth = load_new_scenario(path or "generated/darpa1.txt")
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
     auctioneer = TaskAuctioneer()
 
-    agents = [Agent_Dog(agent_id=i, start=start, obs_radius=2)
-              for i, start in enumerate(agent_starts)]
+    agents = []
+    for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
+        if atype == AgentType.DRONE.value:
+            agents.append(DroneAgent(agent_id=i, start=(sr, sc)))
+        else:
+            agents.append(GroundAgent(agent_id=i, start=(sr, sc)))
 
     print("=" * 52)
     print("  DARPA Exploration Simulation  (task-queue driven)")
@@ -87,7 +90,7 @@ def run_simulation(
             moved_any = False
 
             for agent in agents:
-                if microstep == 1 and not isinstance(agent, Agent_Drone):
+                if microstep == 1 and not isinstance(agent, DroneAgent):
                     continue
 
                 ev = agent.step(known_map)

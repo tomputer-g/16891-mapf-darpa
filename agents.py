@@ -1,43 +1,20 @@
 """
 Agent model and pathfinding for the DARPA exploration simulation.
 
-  AgentStatus  – operational state enum
-  EventType    – discrete event types produced during simulation
-  Event        – event dataclass
-  plan_path    – A* on a KnownMap
-  Agent        – autonomous agent driven by Task objects
+  Event       – event dataclass
+  plan_path   – A* on a KnownMap
+  Agent       – abstract base; subclass for each agent type
+  DroneAgent  – aerial agent; observe() cannot distinguish occupied buildings
+  GroundAgent – ground vehicle; observe() reveals full building occupancy
 """
 
 import heapq
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
 
-from maps import GroundTruthMap, KnownMap, ObservationState
+from maps import GroundTruthMap, KnownMap
+from sim_types import AgentStatus, AgentType, EventType, ObservationState
 from tasks import Task
-
-
-# ===========================================================================
-# Enums
-# ===========================================================================
-
-class AgentStatus(Enum):
-    """Operational state of a single agent."""
-    IDLE       = auto()   # no task currently assigned
-    NAVIGATING = auto()   # following a planned path toward a task target
-    REPLANNING = auto()   # needs to (re)compute a path
-
-    # EXTEND: EXECUTING_TASK, WAITING_FOR_TEAM, DOCKING, CHARGING, …
-
-
-class EventType(Enum):
-    """Events exchanged in the simulation loop."""
-    TASK_ASSIGNED = auto()   # auctioneer gave an agent a new task
-    TASK_COMPLETE = auto()   # agent's current task is finished
-    PATH_BLOCKED  = auto()   # next waypoint turned out to be an obstacle
-    STEP_COMPLETE = auto()   # normal single-step advance
-
-    # EXTEND: AGENT_JOINED, COMMS_RECEIVED, BATTERY_LOW, OBJECTIVE_FOUND, …
 
 
 # ===========================================================================
@@ -55,7 +32,7 @@ class Event:
 # Pathfinding  (self-contained A* — no external dependency)
 # ===========================================================================
 
-_DIRS = [(-1, 0), (0, 1), (1, 0), (0, -1)]   # N E S W
+_DIRS = [(-1, 0), (0, 1), (1, 0), (0, -1)]   # N E S W <<Never Eat Soggy Waffles>>
 
 
 def _move(loc: Tuple[int, int], d: int) -> Tuple[int, int]:
@@ -159,28 +136,30 @@ def plan_path(
 # ===========================================================================
 
 class Agent:
-    """
-    Autonomous agent driven entirely by Task objects; no fixed goal location.
-    Finishes when the auctioneer has no more tasks to assign.
+    """Abstract base for all agents.
 
     Sensor model : axis-aligned square footprint, side = 2*obs_radius + 1.
     Nav policy   : A* to current_task.target_loc on the current KnownMap.
+
+    Subclasses must implement observe(); everything else is shared.
 
     EXTEND: battery model, comms range, payload, team_id, sensor cone, …
     """
 
     def __init__(
         self,
-        agent_id: int,
-        start: Tuple[int, int],
+        agent_id:   int,
+        start:      Tuple[int, int],
+        agent_type: AgentType,
         obs_radius: int = 1,
     ) -> None:
-        self.id = agent_id
-        self.pos = start
-        self.obs_radius = obs_radius
-        self.status = AgentStatus.IDLE
-        self.path: List[Tuple[int, int]] = []
-        self.current_task: Optional[Task] = None
+        self.id            = agent_id
+        self.pos           = start
+        self.agent_type    = agent_type
+        self.obs_radius    = obs_radius
+        self.status        = AgentStatus.IDLE
+        self.path:         List[Tuple[int, int]] = []
+        self.current_task: Optional[Task]        = None
 
     def assign_task(self, task: Task) -> None:
         """Called by the auctioneer; puts the agent into REPLANNING state."""
@@ -188,29 +167,14 @@ class Agent:
         self.path = []
         self.status = AgentStatus.REPLANNING
 
-    def observe_from(
-        self,
-        center: Tuple[int, int],
-        ground_truth: GroundTruthMap,
-        known_map: KnownMap,
-    ) -> None:
-        """Reveal all cells within obs_radius around an arbitrary center."""
-        r, c = center
-        for dr in range(-self.obs_radius, self.obs_radius + 1):
-            for dc in range(-self.obs_radius, self.obs_radius + 1):
-                nr, nc = r + dr, c + dc
-                if not (0 <= nr < ground_truth.rows and 0 <= nc < ground_truth.cols):
-                    continue
-                loc = (nr, nc)
-                new_state = (
-                    ObservationState.OBSTACLE
-                    if ground_truth.is_obstacle(loc)
-                    else ObservationState.FREE
-                )
-                known_map.update(loc, new_state)
-
+    # ------------------------------------------------------------------
     def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
-        self.observe_from(self.pos, ground_truth, known_map)
+        """Reveal cells within obs_radius footprint; update KnownMap in-place.
+
+        Subclasses override this to apply agent-specific sensor rules.
+        EXTEND: line-of-sight, sensor cone, range-dependent noise, …
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement observe()")
 
     def replan(self, known_map: KnownMap) -> bool:
         if self.current_task is None:
@@ -248,46 +212,87 @@ class Agent:
 
 
 # ===========================================================================
-# Agent Drone
+# Concrete agent subclasses
 # ===========================================================================
 
-class Agent_Drone(Agent):
-    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1):
-        super().__init__(agent_id, start, obs_radius)
+class DroneAgent(Agent):
+    """Aerial agent with a wider sensor footprint.
 
-    def step(self, known_map: KnownMap) -> Optional[Event]:
-        """Move one cell along the planned path, ignoring obstacles."""
-        if self.status in (AgentStatus.IDLE, AgentStatus.REPLANNING):
-            return None
-        if len(self.path) < 2:
-            return None
+    Observe rules (cannot see inside buildings):
+        obstacle      → OBSTACLE
+        building      → BUILDING  (occupied or not — drones cannot distinguish)
+        otherwise     → FREE
+    """
 
-        self.pos = self.path[1]
-        self.path = self.path[1:]
-        return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 2) -> None:
+        super().__init__(agent_id, start, AgentType.DRONE, obs_radius)
+
+    def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
+        r, c = self.pos
+        for dr in range(-self.obs_radius, self.obs_radius + 1):
+            for dc in range(-self.obs_radius, self.obs_radius + 1):
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < ground_truth.rows and 0 <= nc < ground_truth.cols):
+                    continue
+                loc = (nr, nc)
+                if ground_truth.is_obstacle(loc):
+                    state = ObservationState.OBSTACLE
+                elif loc in ground_truth.buildings:
+                    state = ObservationState.BUILDING   # cannot tell if occupied
+                else:
+                    state = ObservationState.FREE
+                known_map.update(loc, state)
 
     def replan(self, known_map: KnownMap) -> bool:
         if self.current_task is None:
             self.status = AgentStatus.IDLE
             return False
-
         path = plan_path(known_map, self.pos, self.current_task.target_loc, drone=True)
         if path:
-            self.path = path
+            self.path   = path
             self.status = AgentStatus.NAVIGATING
             return True
-
         self.status = AgentStatus.IDLE
         return False
 
-
-# ===========================================================================
-# Agent Dog
-# ===========================================================================
-
-class Agent_Dog(Agent):
-    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1):
-        super().__init__(agent_id, start, obs_radius)
-
     def step(self, known_map: KnownMap) -> Optional[Event]:
-        return super().step(known_map)
+        """Move one cell along the planned path; drones fly over obstacles."""
+        if self.status in (AgentStatus.IDLE, AgentStatus.REPLANNING):
+            return None
+        if len(self.path) < 2:
+            return None
+        self.pos  = self.path[1]
+        self.path = self.path[1:]
+        return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+
+
+class GroundAgent(Agent):
+    """Ground vehicle / quadruped with full building visibility.
+
+    Observe rules (can enter and inspect buildings):
+        obstacle               → OBSTACLE
+        occupied building      → OCCUPIED_BUILDING
+        unoccupied building    → BUILDING
+        otherwise              → FREE
+    """
+
+    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1) -> None:
+        super().__init__(agent_id, start, AgentType.GROUND, obs_radius)
+
+    def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
+        r, c = self.pos
+        for dr in range(-self.obs_radius, self.obs_radius + 1):
+            for dc in range(-self.obs_radius, self.obs_radius + 1):
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < ground_truth.rows and 0 <= nc < ground_truth.cols):
+                    continue
+                loc = (nr, nc)
+                if ground_truth.is_obstacle(loc):
+                    state = ObservationState.OBSTACLE
+                elif loc in ground_truth.buildings:
+                    state = (ObservationState.OCCUPIED_BUILDING
+                             if ground_truth.buildings[loc]
+                             else ObservationState.BUILDING)
+                else:
+                    state = ObservationState.FREE
+                known_map.update(loc, state)
