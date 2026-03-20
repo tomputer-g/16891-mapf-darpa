@@ -8,7 +8,7 @@ from typing import Optional
 from agents import DroneAgent, GroundAgent
 from maps import KnownMap, load_new_scenario
 from sim_types import AgentStatus, AgentType, EventType
-from tasks import TaskAuctioneer
+from naive_task_allocation import NaiveTaskAuctioneer
 from visualizer import SimulationVisualizer
 
 
@@ -54,7 +54,7 @@ def run_simulation(
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
-    auctioneer = TaskAuctioneer()
+    auctioneer = NaiveTaskAuctioneer()
 
     agents = []
     for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
