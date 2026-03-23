@@ -7,10 +7,10 @@ defaulting to instances/test_0.txt.
 """
 
 import argparse
-from typing import Optional
+from typing import List, Optional
 
-from agents import AgentStatus, EventType, Agent_Dog, Agent_Drone
-from maps import KnownMap, build_default_scenario, load_scenario
+from agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
+from maps import KnownMap, load_scenario
 from SSIA_task_allocation import SequentialSingleItemAuctioneer
 from visualizer import SimulationVisualizer
 
@@ -80,18 +80,15 @@ def run_simulation(
     use_vis: bool = True,
     agent_type: str = "dog",
 ):
-    if path is not None:
-        ground_truth, agent_starts = load_scenario(path)
-    else:
-        ground_truth, agent_starts = build_default_scenario()
+    ground_truth, agent_starts = load_scenario(path)
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
     auctioneer = SequentialSingleItemAuctioneer()
 
-    agent_cls = Agent_Drone if agent_type == "drone" else Agent_Dog
+    agent_cls = DroneAgent if agent_type == "drone" else GroundAgent
     obs_radius = 2 if agent_type == "drone" else 1
-    agents = [
+    agents: List[Agent] = [
         agent_cls(agent_id=i, start=start, obs_radius=obs_radius)
         for i, start in enumerate(agent_starts)
     ]
@@ -126,7 +123,7 @@ def run_simulation(
 
         # Global microstep 2: drones only
         if agent_type == "drone":
-            drone_agents = [a for a in agents if isinstance(a, Agent_Drone)]
+            drone_agents = [a for a in agents if isinstance(a, DroneAgent)]
             if drone_agents:
                 moved_any = (
                     _do_microstep(

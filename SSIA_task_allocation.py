@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from agents import Agent, AgentStatus, Agent_Drone, plan_path
+from agents import Agent, AgentStatus, DroneAgent, plan_path
 from maps import KnownMap, ObservationState
 from tasks import ExplorationTask, Task
 
@@ -146,7 +146,7 @@ class SequentialSingleItemAuctioneer:
         Drones use drone path planning so they can fly over obstacles.
         Ground agents use normal path planning.
         """
-        use_drone_path = isinstance(agent, Agent_Drone)
+        use_drone_path = isinstance(agent, DroneAgent)
 
         path = plan_path(
             known_map,
@@ -222,7 +222,7 @@ class SequentialSingleItemAuctioneer:
         if agent.current_task is None or agent.current_task.completed:
             return False
 
-        use_drone_path = isinstance(agent, Agent_Drone)
+        use_drone_path = isinstance(agent, DroneAgent)
 
         if (
             not use_drone_path
