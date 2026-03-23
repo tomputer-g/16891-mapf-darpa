@@ -1,61 +1,53 @@
 """
 Map representations for the DARPA exploration simulation.
 
-  ObservationState   – per-cell visibility enum
+  ObservationState   – per-cell visibility / content enum (defines ASCII symbols)
+  AgentType          – drone vs. ground-vehicle enum (defines ASCII symbols)
+  PATH_SYMBOL        – ASCII symbol for planned-path waypoints
   GroundTruthMap     – the hidden world (agents cannot read this directly)
   KnownMap           – per-agent belief state; starts fully UNKNOWN
-  build_default_scenario – factory for the default 10×10 test map
 """
 
-from enum import Enum, auto
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+from sim_types import AgentType, ObservationState, PATH_SYMBOL  # noqa: F401
 
 
 # ===========================================================================
-# Enums
-# ===========================================================================
-
-class ObservationState(Enum):
-    """Visibility / content state of a single map cell."""
-    UNKNOWN   = auto()   # never seen by any agent
-    FREE      = auto()   # observed, passable
-    OBSTACLE  = auto()   # observed, impassable
-    OBJECTIVE = auto()   # observed, high-value objective present (see ObjectiveTask)
-
-    # EXTEND: HAZARD, CONTESTED, EXPLORED_STALE, COMMS_RELAY, …
-
-    def symbol(self) -> str:
-        return {
-            ObservationState.UNKNOWN:   '?',
-            ObservationState.FREE:      '.',
-            ObservationState.OBSTACLE:  '#',
-            ObservationState.OBJECTIVE: '!',
-        }[self]
-
-
-# ===========================================================================
-# Maps
+# Map classes
 # ===========================================================================
 
 class GroundTruthMap:
-    """
-    The real world.  grid[r][c] is True when the cell is an obstacle.
-    Agents interact with this only through Agent.observe().
+    """The real world; never read by agents directly (only via Agent.observe()).
+
+    grid[r][c] is True when the cell is an obstacle.
+    buildings maps (r, c) → bool (True = occupied / has objective inside).
     """
 
-    def __init__(self, grid: List[List[bool]]) -> None:
+    def __init__(
+        self,
+        grid: List[List[bool]],
+        *,
+        objectives:   Optional[Set[Tuple[int, int]]]          = None,
+        buildings:    Optional[Dict[Tuple[int, int], bool]]   = None,
+        agent_starts: Optional[List[Tuple[int, int, str]]]    = None,
+    ) -> None:
         self.grid = grid
         self.rows = len(grid)
         self.cols = len(grid[0])
+        self.objectives:   Set[Tuple[int, int]]          = objectives   or set()
+        self.buildings:    Dict[Tuple[int, int], bool]   = buildings    or {}
+        self.agent_starts: List[Tuple[int, int, str]]    = agent_starts or []
 
     def is_obstacle(self, loc: Tuple[int, int]) -> bool:
         return self.grid[loc[0]][loc[1]]
 
 
 class KnownMap:
-    """
-    Per-agent belief state.  Every cell starts as UNKNOWN.
+    """Per-agent belief state; every cell starts as UNKNOWN.
+
+    TODO: shared map across agents with concurrency control.
     """
 
     def __init__(self, rows: int, cols: int) -> None:
@@ -65,6 +57,7 @@ class KnownMap:
             [ObservationState.UNKNOWN] * cols for _ in range(rows)
         ]
 
+    #TODO Make this a 3x3 grid update, or variable grid update depending on the agent
     def update(self, loc: Tuple[int, int], obs: ObservationState) -> bool:
         """Write a new observation.  Returns True if the cell state changed."""
         r, c = loc
@@ -86,23 +79,29 @@ class KnownMap:
 
     def print_map(
         self,
-        agent_locs:   Optional[List[Tuple[int, int]]] = None,
-        task_targets: Optional[List[Tuple[int, int]]] = None,
-        path:         Optional[List[Tuple[int, int]]] = None,
+        agent_locs:   Optional[List[Tuple[int, int, AgentType]]] = None,
+        task_targets: Optional[List[Tuple[int, int]]]             = None,
+        path:         Optional[List[Tuple[int, int]]]             = None,
     ) -> None:
-        agent_set  = set(agent_locs   or [])
+        """Print an ASCII snapshot of the known map.
+
+        agent_locs entries are (row, col, AgentType).
+        task_targets render as ObservationState.OBJECTIVE symbol ('o').
+        path waypoints render as PATH_SYMBOL ('*'), excluding current position.
+        """
+        agent_map  = {(r, c): atype for r, c, atype in (agent_locs or [])}
         target_set = set(task_targets or [])
         path_set   = set(path[1:]) if path else set()   # skip current position
         for r in range(self.rows):
             row = ""
             for c in range(self.cols):
                 loc = (r, c)
-                if loc in agent_set:
-                    row += 'A'
+                if loc in agent_map:
+                    row += agent_map[loc].symbol()
                 elif loc in target_set:
-                    row += 'T'
+                    row += ObservationState.OBJECTIVE.symbol()
                 elif loc in path_set:
-                    row += '*'
+                    row += PATH_SYMBOL
                 else:
                     row += self.state[r][c].symbol()
             print(row)
@@ -112,56 +111,11 @@ class KnownMap:
 # Scenario factory
 # ===========================================================================
 
-def build_default_scenario() -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
-    """
-    10 × 10 map with two obstacle clusters.  The full map is initially
-    hidden from agents; they must explore to reveal it.
-
-    Ground truth (row increases downward):
-
-        . . . . . . . . . .    row 0
-        . . . # . . . . . .    row 1  ← vertical wall at col 3, rows 1–3
-        . . . # . . . . . .    row 2
-        . . . # . . . . . .    row 3
-        . . . . . . . . . .    row 4
-        . . . . . . . . . .    row 5
-        . . . . . . . # . .    row 6  ← side barrier at col 7, rows 6–7
-        . . . . . . . # . .    row 7
-        . . . . . . . . . .    row 8
-        . . . . . . . . . .    row 9
-
-    Returns the ground-truth map and a list of agent start positions.
-    """
-    rows, cols = 10, 10
-    obstacle_locs = {(1, 3), (2, 3), (3, 3), (6, 7), (7, 7)}
-    grid = [
-        [((r, c) in obstacle_locs) for c in range(cols)]
-        for r in range(rows)
-    ]
-    return GroundTruthMap(grid), [(0, 0)]
-
-
 def load_scenario(path: str) -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
-    """
-    Load a scenario from a text file.
+    """Deprecated — use load_new_scenario() instead.
 
-    File format
-    -----------
-    Line 1          : <rows> <cols>
-    Lines 2..rows+1 : space-separated cells — '@' obstacle, '.' free
-    Line rows+2     : <num_agents>
-    Lines rows+3..  : <start_row> <start_col> <goal_row> <goal_col>
-                      (goal coordinates are recorded but not used)
-
-    Example (maps/exp0.txt):
-        4 7
-        @ @ @ @ @ @ @
-        @ . . . . . @
-        @ @ @ . @ @ @
-        @ @ @ @ @ @ @
-        2
-        1 1 1 5
-        1 2 1 4
+    Reads the old HW-style format (4-int agent lines, no objectives/buildings).
+    Returns (GroundTruthMap, agent_starts) for backward compatibility.
     """
     lines = Path(path).read_text().splitlines()
     it = (ln for ln in lines if ln.strip())   # skip blank lines
@@ -183,3 +137,56 @@ def load_scenario(path: str) -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
 
     return GroundTruthMap(grid), agent_starts
 
+
+def load_new_scenario(path: str) -> GroundTruthMap:
+    """Load a scenario file produced by generate_scenario.py.
+
+    File format (for an R×C map with N agents, K objectives, M buildings):
+
+        <R> <C>
+        <R rows of space-separated '.' / '@' cells>
+        <N>
+        <sr> <sc> <D|G>      ← one line per agent
+        <K>
+        <or> <oc>            ← one line per free-standing objective
+        <M>
+        <br> <bc> <0|1>      ← one line per building; 1 = occupied
+
+    Cell and agent symbols are defined by ObservationState.symbol() and
+    AgentType.symbol() respectively.
+    """
+    lines = Path(path).read_text().splitlines()
+    it = (ln for ln in lines if ln.strip())
+
+    R, C = map(int, next(it).split())
+
+    grid: List[List[bool]] = []
+    for _ in range(R):
+        tokens = next(it).split()
+        cells = list(tokens[0]) if len(tokens) == 1 else tokens
+        grid.append([cell == '@' for cell in cells])
+
+    num_agents = int(next(it))
+    agent_starts: List[Tuple[int, int, str]] = []
+    for _ in range(num_agents):
+        sr, sc, atype = next(it).split()
+        agent_starts.append((int(sr), int(sc), atype))
+
+    num_objectives = int(next(it))
+    objectives: Set[Tuple[int, int]] = set()
+    for _ in range(num_objectives):
+        r, c = map(int, next(it).split())
+        objectives.add((r, c))
+
+    num_buildings = int(next(it))
+    buildings: Dict[Tuple[int, int], bool] = {}
+    for _ in range(num_buildings):
+        r, c, occ = next(it).split()
+        buildings[(int(r), int(c))] = bool(int(occ))
+
+    return GroundTruthMap(
+        grid,
+        objectives=objectives,
+        buildings=buildings,
+        agent_starts=agent_starts,
+    )
