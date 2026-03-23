@@ -111,7 +111,6 @@ class KnownMap:
 # Scenario factory
 # ===========================================================================
 
-@DeprecationWarning
 def load_scenario(path: str) -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
     """Deprecated — use load_new_scenario() instead.
 
