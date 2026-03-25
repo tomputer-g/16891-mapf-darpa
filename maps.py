@@ -70,6 +70,11 @@ class KnownMap:
         """UNKNOWN cells are optimistically treated as passable."""
         return self.state[loc[0]][loc[1]] != ObservationState.OBSTACLE
 
+    def is_building(self, loc: Tuple[int, int]) -> bool:
+        """True if the cell is a known building (occupied or not)."""
+        s = self.state[loc[0]][loc[1]]
+        return s in (ObservationState.BUILDING, ObservationState.OCCUPIED_BUILDING)
+
     def to_obstacle_grid(self) -> List[List[bool]]:
         """Binary grid for A* (True = blocked)."""
         return [

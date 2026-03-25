@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
-from sim_types import ObservationState
+from sim_types import AgentType, ObservationState
 
 if TYPE_CHECKING:
     from agents import Agent
@@ -91,6 +91,22 @@ class ExplorationTask(Task):
                 return True
         return False
 
+class TriageTask(Task):
+    def __init__(self, loc: Tuple[int, int], priority: float = 2.0,
+                 dwell_steps: int = 2, ground_only: bool = False) -> None:
+        super().__init__(priority)
+        self._target_loc = loc
+        self.dwell_steps = dwell_steps
+        self.progress = 0
+        self.ground_only = ground_only
+
+    @property
+    def target_loc(self) -> Tuple[int, int]:
+        return self._target_loc
+
+    def check_completion(self, known_map: "KnownMap") -> bool:
+        return self.completed
+
 
 # ===========================================================================
 # Task Auctioneer
@@ -116,6 +132,8 @@ class TaskAuctioneer:
     def __init__(self) -> None:
         self._tasks:      List[Task]            = []
         self._known_locs: Set[Tuple[int, int]]  = set()   # dedup ExplorationTasks
+        self._triage_locs: Set[Tuple[int, int]] = set()   # dedup TriageTasks
+        self._invest_locs: Set[Tuple[int, int]] = set()   # dedup building investigations
 
     # ------------------------------------------------------------------
     def register(self, task: Task) -> bool:
@@ -153,6 +171,63 @@ class TaskAuctioneer:
                             and known_map.state[nr][nc] == ObservationState.UNKNOWN):
                         if self.register(ExplorationTask((nr, nc))):
                             new_count += 1
+        return new_count
+    
+    def add_revealed_triage_tasks(self, known_map: "KnownMap", ground_truth) -> int:
+        """Create tasks for revealed objectives and buildings.
+
+        - Free-standing objectives get a TriageTask immediately.
+        - Buildings get a ground-only investigation TriageTask so a ground
+          robot is dispatched to check occupancy.  Actual triage tasks for
+          occupied buildings are created later by
+          add_confirmed_building_triage().
+        Returns the number of newly created tasks.
+        """
+        new_count = 0
+        # Free-standing objectives
+        for loc in ground_truth.objectives:
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OBJECTIVE and loc not in self._triage_locs:
+                task = TriageTask(loc)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
+        # Buildings -- send ground robot to investigate (occupancy unknown)
+        for loc in ground_truth.buildings:
+            r, c = loc
+            state = known_map.state[r][c]
+            if state in (ObservationState.BUILDING, ObservationState.OCCUPIED_BUILDING) and loc not in self._invest_locs:
+                task = TriageTask(loc, ground_only=True, dwell_steps=1)
+                task._is_investigation = True
+                self._invest_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
+        return new_count
+
+    def add_confirmed_building_triage(self, known_map: "KnownMap") -> int:
+        """After a ground robot has investigated a building and the known
+        map shows OCCUPIED_BUILDING, create an actual triage task.
+        Only promotes once the investigation task for that location is done.
+        Returns the number of newly created tasks.
+        """
+        # Build set of locations whose investigation is complete
+        done_investigations: Set[Tuple[int, int]] = set()
+        for t in self._tasks:
+            if (isinstance(t, TriageTask)
+                    and getattr(t, '_is_investigation', False)
+                    and t.completed):
+                done_investigations.add(t.target_loc)
+
+        new_count = 0
+        for loc in list(self._invest_locs):
+            if loc not in done_investigations:
+                continue
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OCCUPIED_BUILDING and loc not in self._triage_locs:
+                task = TriageTask(loc, ground_only=True)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
         return new_count
 
     # ------------------------------------------------------------------
@@ -211,14 +286,21 @@ class TaskAuctioneer:
             if not available:
                 break
 
+            # Filter tasks this agent is eligible for
+            eligible = [t for t in available
+                        if not (isinstance(t, TriageTask) and t.ground_only
+                                and agent.agent_type != AgentType.GROUND)]
+            if not eligible:
+                continue
+
             def score(t: Task) -> Tuple[float, float]:
                 r0, c0 = agent.pos
                 r1, c1 = t.target_loc
                 return (t.priority, -(abs(r1 - r0) + abs(c1 - c0)))
 
-            winner = max(available, key=score)
+            winner = max(eligible, key=score)
             winner.assigned_to = agent.id
             available.remove(winner)
             agent.assign_task(winner)
-            print(f"  [AUCTION] Task {winner.task_id} → Agent {agent.id}"
+            print(f"  [AUCTION] Task {winner.task_id} -> Agent {agent.id}"
                   f"  target={winner.target_loc}")

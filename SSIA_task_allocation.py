@@ -26,7 +26,18 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from agents import Agent, AgentStatus, DroneAgent, plan_path
 from maps import KnownMap, ObservationState
-from tasks import ExplorationTask, Task
+from sim_types import AgentType
+from tasks import ExplorationTask, TriageTask, Task
+
+
+# Reward values used in the bid formula: reward / (path_length + dwell_time)
+_TASK_REWARD = {
+    ExplorationTask: 1,
+    TriageTask: 5,
+}
+
+# Dwell steps by agent type (must stay in sync with SSIA_main._TRIAGE_DWELL)
+_TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
 
 
 @dataclass
@@ -34,7 +45,7 @@ class Bid:
     """Single sealed bid for one task from one agent."""
     agent_id: int
     task_id: int
-    cost: int
+    score: float
     path: List[Tuple[int, int]]
 
 
@@ -46,6 +57,8 @@ class SequentialSingleItemAuctioneer:
     def __init__(self) -> None:
         self._tasks: List[Task] = []
         self._known_locs: Set[Tuple[int, int]] = set()
+        self._triage_locs: Set[Tuple[int, int]] = set()
+        self._invest_locs: Set[Tuple[int, int]] = set()
         self.reauction_count: int = 0
 
     # ------------------------------------------------------------------
@@ -84,6 +97,50 @@ class SequentialSingleItemAuctioneer:
                             and known_map.state[nr][nc] == ObservationState.UNKNOWN):
                         if self.register(ExplorationTask((nr, nc))):
                             new_count += 1
+        return new_count
+
+    def add_revealed_triage_tasks(self, known_map: KnownMap, ground_truth) -> Tuple[int, int]:
+        """Create tasks for revealed objectives and buildings.
+        Returns (triage_count, investigation_count)."""
+        triage_count = 0
+        invest_count = 0
+        for loc in ground_truth.objectives:
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OBJECTIVE and loc not in self._triage_locs:
+                task = TriageTask(loc)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                triage_count += 1
+        for loc in ground_truth.buildings:
+            r, c = loc
+            state = known_map.state[r][c]
+            if state in (ObservationState.BUILDING, ObservationState.OCCUPIED_BUILDING) and loc not in self._invest_locs:
+                task = TriageTask(loc, ground_only=True, dwell_steps=1)
+                task._is_investigation = True
+                self._invest_locs.add(loc)
+                self._tasks.append(task)
+                invest_count += 1
+        return triage_count, invest_count
+
+    def add_confirmed_building_triage(self, known_map: KnownMap) -> int:
+        """Create triage tasks for buildings confirmed occupied after investigation."""
+        done_investigations: Set[Tuple[int, int]] = set()
+        for t in self._tasks:
+            if (isinstance(t, TriageTask)
+                    and getattr(t, '_is_investigation', False)
+                    and t.completed):
+                done_investigations.add(t.target_loc)
+
+        new_count = 0
+        for loc in list(self._invest_locs):
+            if loc not in done_investigations:
+                continue
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OCCUPIED_BUILDING and loc not in self._triage_locs:
+                task = TriageTask(loc, ground_only=True)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
         return new_count
 
     @property
@@ -157,25 +214,71 @@ class SequentialSingleItemAuctioneer:
         if not path:
             return None
 
-        cost = max(0, len(path) - 1)
+        path_len = max(1, len(path) - 1)
+        # Drones move twice per step, so effective travel time is halved
+        if use_drone_path:
+            path_len = path_len / 2
+        reward = _TASK_REWARD.get(type(task), 1)
+
+        # Dwell time: triage tasks require dwelling at the target
+        if isinstance(task, TriageTask):
+            if getattr(task, '_is_investigation', False):
+                dwell = 1
+            else:
+                dwell = _TRIAGE_DWELL.get(agent.agent_type, task.dwell_steps)
+        else:
+            dwell = 0
+
+        score = reward / (path_len + dwell)
         return Bid(
             agent_id=agent.id,
             task_id=task.task_id,
-            cost=cost,
+            score=score,
             path=path,
         )
+
+    @staticmethod
+    def _auction_priority(task: Task, agents: List[Agent]) -> float:
+        """Score used to decide the order tasks are offered in the auction.
+
+        priority = reward - manhattan_distance_to_closest_eligible_agent
+
+        High-reward tasks close to at least one agent are offered first.
+        """
+        reward = _TASK_REWARD.get(type(task), 1)
+        tr, tc = task.target_loc
+        min_dist = float('inf')
+        for agent in agents:
+            if (isinstance(task, TriageTask) and task.ground_only
+                    and agent.agent_type != AgentType.GROUND):
+                continue
+            dist = abs(agent.pos[0] - tr) + abs(agent.pos[1] - tc)
+            if dist < min_dist:
+                min_dist = dist
+        if min_dist == float('inf'):
+            min_dist = 0
+        return reward - min_dist
 
     def auction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
         Run a sequential single-item auction.
+
+        Tasks are offered in order of reward - manhattan_dist_to_closest_agent
+        so nearby high-reward tasks are assigned first.
         """
-        available_tasks = self.pending()
-        if not available_tasks:
+        pending = self.pending()
+        if not pending:
             return
 
-        available_agents = self.available_agents(agents)
+        available_agents = list(self.available_agents(agents))
         if not available_agents:
             return
+
+        available_tasks = sorted(
+            pending,
+            key=lambda t: self._auction_priority(t, available_agents),
+            reverse=True,
+        )
 
         for task in available_tasks:
             if not available_agents:
@@ -183,6 +286,10 @@ class SequentialSingleItemAuctioneer:
 
             bids: List[Bid] = []
             for agent in available_agents:
+                # Filter ground_only tasks from non-ground agents
+                if (isinstance(task, TriageTask) and task.ground_only
+                        and agent.agent_type != AgentType.GROUND):
+                    continue
                 bid = self.compute_bid(agent, task, known_map)
                 if bid is not None:
                     bids.append(bid)
@@ -190,7 +297,7 @@ class SequentialSingleItemAuctioneer:
             if not bids:
                 continue
 
-            winner = min(bids, key=lambda b: (b.cost, b.agent_id))
+            winner = max(bids, key=lambda b: (b.score, -b.agent_id))
             winning_agent = next(a for a in available_agents if a.id == winner.agent_id)
 
             task.assigned_to = winning_agent.id
@@ -201,7 +308,7 @@ class SequentialSingleItemAuctioneer:
 
             print(
                 f"  [AUCTION] Task {task.task_id} -> Agent {winning_agent.id} "
-                f"target={task.target_loc} bid_cost={winner.cost}"
+                f"target={task.target_loc} bid_score={winner.score:.2f}"
             )
 
     # ------------------------------------------------------------------
@@ -243,8 +350,8 @@ class SequentialSingleItemAuctioneer:
         """
         Lightweight inter-robot conflict detection.
 
-        Triggers when two robots intend to occupy the same next cell or swap
-        cells on the next move.
+        Only checks conflicts between agents of the same type (ground-ground
+        or drone-drone), since they operate at different altitudes.
         """
         next_pos: Dict[int, Tuple[int, int]] = {}
         curr_pos: Dict[int, Tuple[int, int]] = {a.id: a.pos for a in agents}
@@ -256,27 +363,38 @@ class SequentialSingleItemAuctioneer:
             next_pos[agent.id] = agent.path[1]
             active_agents.append(agent)
 
-        seen: Set[Tuple[int, int]] = set()
-        for pos in next_pos.values():
-            if pos in seen:
-                return True
-            seen.add(pos)
+        # Vertex conflicts: two same-type agents targeting the same cell
+        from collections import defaultdict
+        by_type: Dict[AgentType, List[Agent]] = defaultdict(list)
+        for agent in active_agents:
+            by_type[agent.agent_type].append(agent)
 
-        for i in range(len(active_agents)):
-            for j in range(i + 1, len(active_agents)):
-                a = active_agents[i]
-                b = active_agents[j]
-                if next_pos[a.id] == curr_pos[b.id] and next_pos[b.id] == curr_pos[a.id]:
+        for group in by_type.values():
+            seen: Set[Tuple[int, int]] = set()
+            for agent in group:
+                pos = next_pos[agent.id]
+                if pos in seen:
                     return True
+                seen.add(pos)
+
+        # Edge (swap) conflicts: only between same-type agents
+        for group in by_type.values():
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a = group[i]
+                    b = group[j]
+                    if next_pos[a.id] == curr_pos[b.id] and next_pos[b.id] == curr_pos[a.id]:
+                        return True
         return False
 
     def should_trigger_reauction(self, agents: List[Agent], known_map: KnownMap) -> bool:
         """
         Check for global reauction conditions.
+
+        Only triggers on inter-robot motion conflicts (vertex or edge
+        collisions between same-type agents). Path infeasibility and
+        new task discovery are handled by normal replanning and auction.
         """
-        for agent in agents:
-            if self._path_infeasible(agent, known_map):
-                return True
         return self._next_move_conflict(agents)
 
     def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap) -> None:
@@ -288,6 +406,9 @@ class SequentialSingleItemAuctioneer:
         for task in self._tasks:
             if not task.completed:
                 task.assigned_to = None
+                # Reset dwell progress so the new winner starts fresh
+                if isinstance(task, TriageTask):
+                    task.progress = 0
 
         for agent in agents:
             agent.current_task = None
@@ -300,19 +421,67 @@ class SequentialSingleItemAuctioneer:
     # ------------------------------------------------------------------
     # Convenience update hook for the main loop
     # ------------------------------------------------------------------
-    def update(self, agents: List[Agent], known_map: KnownMap) -> None:
+    def update(self, agents: List[Agent], known_map: KnownMap,
+               ground_truth=None, verbose: bool = False) -> None:
         """
-        One allocator update.
+        One allocator update: task creation -> sweep -> release -> reauction/auction.
         """
-        self.add_frontier_tasks(known_map)
-        self.sweep_completions(known_map)
+        # 1. Add exploration frontier tasks
+        new_explore = self.add_frontier_tasks(known_map)
+        if new_explore and verbose:
+            print(f"  [FRONTIER] +{new_explore} exploration task(s) queued")
 
+        # 2. Add revealed triage / investigation tasks
+        new_triage = 0
+        new_bldg = 0
+        if ground_truth is not None:
+            new_triage, new_invest = self.add_revealed_triage_tasks(known_map, ground_truth)
+            if (new_triage + new_invest) and verbose:
+                print(f"  [TASKS]   +{new_triage} triage +{new_invest} investigation task(s) revealed")
+
+            new_bldg = self.add_confirmed_building_triage(known_map)
+            if new_bldg and verbose:
+                print(f"  [TRIAGE]  +{new_bldg} occupied building triage task(s) confirmed")
+
+        # Trigger reauction when high-value tasks appear: objective triage
+        # or confirmed occupied building triage — but NOT low-value
+        # investigation tasks (preliminary building checks).
+        new_high_value_tasks = (new_triage + new_bldg) > 0
+
+        # 3. Sweep collateral completions
+        swept = self.sweep_completions(known_map)
+        if swept and verbose:
+            print(f"  [SWEPT]   {swept} task(s) observed as collateral")
+
+        # 4. Release agents whose current task is finished
         for agent in agents:
             if agent.current_task and agent.current_task.completed:
+                if verbose:
+                    task = agent.current_task
+                    if isinstance(task, TriageTask) and getattr(task, '_is_investigation', False):
+                        print(f"  [INVESTIGATED] Agent {agent.id} checked building at {task.target_loc}")
+                    elif isinstance(task, TriageTask):
+                        print(f"  [TRIAGE DONE] Agent {agent.id} finished triage task "
+                              f"{task.task_id} at {task.target_loc}")
+                    else:
+                        print(f"  [TASK DONE] Agent {agent.id} finished task"
+                              f" {task.task_id}  (observed {task.target_loc})")
                 agent.current_task = None
                 agent.path = []
                 agent.status = AgentStatus.IDLE
 
+        # 4b. Release agents whose path became infeasible (no global reauction)
+        for agent in agents:
+            if self._path_infeasible(agent, known_map):
+                if verbose:
+                    print(f"  [INFEASIBLE] Agent {agent.id} path to "
+                          f"{agent.current_task.target_loc} blocked; releasing task")
+                agent.current_task.assigned_to = None
+                agent.current_task = None
+                agent.path = []
+                agent.status = AgentStatus.IDLE
+
+        # 5. Reauction on conflict, otherwise normal auction
         if self.should_trigger_reauction(agents, known_map):
             self.trigger_global_reauction(agents, known_map)
         else:

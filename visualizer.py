@@ -14,7 +14,7 @@ import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
 from maps import GroundTruthMap, KnownMap
-from sim_types import ObservationState
+from sim_types import AgentType, ObservationState
 
 if TYPE_CHECKING:
     from agents import Agent
@@ -184,11 +184,20 @@ class SimulationVisualizer:
             elements.append(mpatches.Patch(facecolor=self._KN_OBJECTIVE[:3],
                                            edgecolor="#aaa", label="Objective"))
         if agents:
-            elements.append(Line2D(
-                [0], [0], marker="o", color=_AGENT_PALETTE[0],
-                markeredgecolor="black", markersize=9,
-                linestyle="--", linewidth=1.5,
-                label=f"Agents (×{len(agents)})"))
+            n_drones  = sum(1 for a in agents if a.agent_type == AgentType.DRONE)
+            n_ground  = sum(1 for a in agents if a.agent_type == AgentType.GROUND)
+            if n_drones:
+                elements.append(Line2D(
+                    [0], [0], marker="^", color=_AGENT_PALETTE[0],
+                    markeredgecolor="black", markersize=9,
+                    linestyle="--", linewidth=1.5,
+                    label=f"Drone ({n_drones})"))
+            if n_ground:
+                elements.append(Line2D(
+                    [0], [0], marker="s", color=_AGENT_PALETTE[2 % len(_AGENT_PALETTE)],
+                    markeredgecolor="black", markersize=9,
+                    linestyle="--", linewidth=1.5,
+                    label=f"Ground ({n_ground})"))
         if hasattr(self, "_legend_handle") and self._legend_handle:
             self._legend_handle.remove()
         legend = self.ax.legend(
@@ -202,13 +211,18 @@ class SimulationVisualizer:
         idx   = len(self._agent_artists)
         color = _AGENT_PALETTE[idx % len(_AGENT_PALETTE)]
 
+        # Drones: triangle-up, Ground: square
+        is_drone = agent.agent_type == AgentType.DRONE
+        marker = "^" if is_drone else "s"
+        msize  = 13  if is_drone else 11
+
         path_line, = self.ax.plot(
             [], [], "--", color=color, linewidth=1.6, alpha=0.85, zorder=4)
         task_dot, = self.ax.plot(
             [], [], "*", color=color, markersize=16,
             markeredgecolor="black", markeredgewidth=0.8, zorder=5)
         agent_dot, = self.ax.plot(
-            [], [], "o", color=color, markersize=12,
+            [], [], marker, color=color, markersize=msize,
             markeredgecolor="black", markeredgewidth=1.0, zorder=6)
         label = self.ax.text(
             0, 0, str(agent.id),
@@ -269,7 +283,7 @@ class SimulationVisualizer:
         self._title.set_text(f"Step {step}   |   {task_stats}")
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        plt.pause(0.05)
+        plt.pause(0.3)
 
     def finalize(self, task_stats: str) -> None:
         """Mark simulation complete and block until the window is closed."""

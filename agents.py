@@ -121,6 +121,9 @@ def plan_path(
                 continue
             if (not drone) and (not known_map.is_passable(nb)):
                 continue
+            # Drones cannot enter buildings
+            if drone and known_map.is_building(nb):
+                continue
 
             g = curr['g'] + 1
             h = h_val.get(nb, 0)
@@ -239,6 +242,8 @@ class DroneAgent(Agent):
                     state = ObservationState.OBSTACLE
                 elif loc in ground_truth.buildings:
                     state = ObservationState.BUILDING   # cannot tell if occupied
+                elif loc in ground_truth.objectives:
+                    state = ObservationState.OBJECTIVE
                 else:
                     state = ObservationState.FREE
                 known_map.update(loc, state)
@@ -256,11 +261,19 @@ class DroneAgent(Agent):
         return False
 
     def step(self, known_map: KnownMap) -> Optional[Event]:
-        """Move one cell along the planned path; drones fly over obstacles."""
+        """Move one cell along the planned path; drones fly over obstacles but not buildings."""
         if self.status in (AgentStatus.IDLE, AgentStatus.REPLANNING):
             return None
         if len(self.path) < 2:
             return None
+        next_pos = self.path[1]
+        if known_map.is_building(next_pos):
+            self.path = []
+            self.status = AgentStatus.IDLE
+            return Event(
+                EventType.PATH_BLOCKED,
+                {'agent': self.id, 'blocked_at': next_pos},
+            )
         self.pos  = self.path[1]
         self.path = self.path[1:]
         return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
@@ -293,6 +306,8 @@ class GroundAgent(Agent):
                     state = (ObservationState.OCCUPIED_BUILDING
                              if ground_truth.buildings[loc]
                              else ObservationState.BUILDING)
+                elif loc in ground_truth.objectives:
+                    state = ObservationState.OBJECTIVE
                 else:
                     state = ObservationState.FREE
                 known_map.update(loc, state)
