@@ -10,11 +10,14 @@ Agent model and pathfinding for the DARPA exploration simulation.
 
 import heapq
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from maps import GroundTruthMap, KnownMap
 from sim_types import AgentStatus, AgentType, EventType, ObservationState
 from tasks import Task
+
+if TYPE_CHECKING:
+    from planner import CBS
 
 
 # ===========================================================================
@@ -149,6 +152,7 @@ class Agent:
     def __init__(
         self,
         agent_id:   int,
+        planner:    'CBS',
         start:      Tuple[int, int],
         agent_type: AgentType,
         obs_radius: int = 1,
@@ -158,8 +162,16 @@ class Agent:
         self.agent_type    = agent_type
         self.obs_radius    = obs_radius
         self.status        = AgentStatus.IDLE
-        self.path:         List[Tuple[int, int]] = []
-        self.current_task: Optional[Task]        = None
+        self.current_task: Optional[Task] = None
+        self._planner:     'CBS'          = planner
+
+    @property
+    def path(self) -> List[Tuple[int, int]]:
+        return self._planner.get_path(self.id)
+
+    @path.setter
+    def path(self, value: List[Tuple[int, int]]) -> None:
+        self._planner.set_path(self.id, value)
 
     def assign_task(self, task: Task) -> None:
         """Called by the auctioneer; puts the agent into REPLANNING state."""
@@ -181,9 +193,13 @@ class Agent:
             self.status = AgentStatus.IDLE
             return False
 
-        path = plan_path(known_map, self.pos, self.current_task.target_loc)
-        if path:
-            self.path = path
+        paths = self._planner.plan(
+            {self.id: self.pos},
+            {self.id: self.current_task.target_loc},
+            known_map,
+        )
+        if paths:
+            self.path = paths[self.id]
             self.status = AgentStatus.NAVIGATING
             return True
 
@@ -197,18 +213,14 @@ class Agent:
         if len(self.path) < 2:
             return None
 
-        next_pos = self.path[1]
-        if not known_map.is_passable(next_pos):
-            self.path = []
+        event = self._planner.step(self.id, known_map)
+        if event is None:
+            return None
+        if event.kind == EventType.STEP_COMPLETE:
+            self.pos = event.data['pos']
+        elif event.kind == EventType.PATH_BLOCKED:
             self.status = AgentStatus.IDLE
-            return Event(
-                EventType.PATH_BLOCKED,
-                {'agent': self.id, 'blocked_at': next_pos},
-            )
-
-        self.pos = next_pos
-        self.path = self.path[1:]
-        return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+        return event
 
 
 # ===========================================================================
@@ -224,8 +236,22 @@ class DroneAgent(Agent):
         otherwise     → FREE
     """
 
-    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 2) -> None:
-        super().__init__(agent_id, start, AgentType.DRONE, obs_radius)
+    def __init__(
+        self,
+        agent_id:   int,
+        planner:    'CBS',
+        start:      Tuple[int, int],
+        obs_radius: int = 2,
+    ) -> None:
+        super().__init__(agent_id, planner, start, AgentType.DRONE, obs_radius)
+
+    @property
+    def path(self) -> List[Tuple[int, int]]:
+        return self._planner.get_path(self.id)
+
+    @path.setter
+    def path(self, value: List[Tuple[int, int]]) -> None:
+        self._planner.set_path(self.id, value, drone=True)
 
     def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
         r, c = self.pos
@@ -238,7 +264,7 @@ class DroneAgent(Agent):
                 if ground_truth.is_obstacle(loc):
                     state = ObservationState.OBSTACLE
                 elif loc in ground_truth.buildings:
-                    state = ObservationState.BUILDING   # cannot tell if occupied
+                    state = ObservationState.BUILDING
                 else:
                     state = ObservationState.FREE
                 known_map.update(loc, state)
@@ -247,9 +273,14 @@ class DroneAgent(Agent):
         if self.current_task is None:
             self.status = AgentStatus.IDLE
             return False
-        path = plan_path(known_map, self.pos, self.current_task.target_loc, drone=True)
-        if path:
-            self.path   = path
+        paths = self._planner.plan(
+            {self.id: self.pos},
+            {self.id: self.current_task.target_loc},
+            known_map,
+            drone=True,
+        )
+        if paths:
+            self.path = paths[self.id]
             self.status = AgentStatus.NAVIGATING
             return True
         self.status = AgentStatus.IDLE
@@ -261,9 +292,12 @@ class DroneAgent(Agent):
             return None
         if len(self.path) < 2:
             return None
-        self.pos  = self.path[1]
-        self.path = self.path[1:]
-        return Event(EventType.STEP_COMPLETE, {'agent': self.id, 'pos': self.pos})
+        event = self._planner.step(self.id, known_map)
+        if event is None:
+            return None
+        if event.kind == EventType.STEP_COMPLETE:
+            self.pos = event.data['pos']
+        return event
 
 
 class GroundAgent(Agent):
@@ -276,8 +310,14 @@ class GroundAgent(Agent):
         otherwise              → FREE
     """
 
-    def __init__(self, agent_id: int, start: Tuple[int, int], obs_radius: int = 1) -> None:
-        super().__init__(agent_id, start, AgentType.GROUND, obs_radius)
+    def __init__(
+        self,
+        agent_id:   int,
+        planner:    'CBS',
+        start:      Tuple[int, int],
+        obs_radius: int = 1,
+    ) -> None:
+        super().__init__(agent_id, planner, start, AgentType.GROUND, obs_radius)
 
     def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
         r, c = self.pos

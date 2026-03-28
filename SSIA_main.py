@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
 from maps import KnownMap, load_scenario
+from planner import CBS
 from SSIA_task_allocation import SequentialSingleItemAuctioneer
 from visualizer import SimulationVisualizer
 
@@ -74,7 +75,7 @@ def _do_microstep(agents, ground_truth, known_map, auctioneer, verbose: bool) ->
 
 
 def run_simulation(
-    path: Optional[str] = "instances/test_0.txt",
+    path: str = "instances/test_0.txt",
     max_steps: int = 200,
     verbose: bool = True,
     use_vis: bool = True,
@@ -85,11 +86,12 @@ def run_simulation(
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
     auctioneer = SequentialSingleItemAuctioneer()
+    planner = CBS(rows, cols)
 
     agent_cls = DroneAgent if agent_type == "drone" else GroundAgent
     obs_radius = 2 if agent_type == "drone" else 1
     agents: List[Agent] = [
-        agent_cls(agent_id=i, start=start, obs_radius=obs_radius)
+        agent_cls(agent_id=i, start=start, obs_radius=obs_radius, planner=planner)
         for i, start in enumerate(agent_starts)
     ]
 

@@ -45,9 +45,8 @@ class GroundTruthMap:
 
 
 class KnownMap:
-    """Per-agent belief state; every cell starts as UNKNOWN.
-
-    TODO: shared map across agents with concurrency control.
+    """
+    Global known map of the world that is being uncovered with exploration tasks. All agents use the same KnownMap.
     """
 
     def __init__(self, rows: int, cols: int) -> None:
