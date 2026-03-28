@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from agents import Agent, AgentStatus, DroneAgent, GroundAgent, plan_path
+from agents import Agent
 from maps import KnownMap, ObservationState
 from tasks import ExplorationTask, Task
 

@@ -7,6 +7,7 @@ from typing import Optional
 
 from agents import DroneAgent, GroundAgent
 from maps import KnownMap, load_new_scenario
+from planner import CBS
 from sim_types import AgentStatus, AgentType, EventType
 from tasks import TaskAuctioneer, TriageTask
 from naive_task_allocation import NaiveTaskAuctioneer
@@ -112,24 +113,25 @@ def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbo
 
 
 def run_simulation(
-    path: Optional[str] = "generated/darpa1.txt",
+    path: str = "generated/darpa1.txt",
     max_steps: int = 200,
     verbose: bool = True,
     use_vis: bool = True,
 ) -> KnownMap:
     
-    ground_truth = load_new_scenario(path or "generated/darpa1.txt")
+    ground_truth = load_new_scenario(path)
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
     auctioneer = NaiveTaskAuctioneer()
+    planner = CBS(rows, cols)
 
     agents = []
     for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
         if atype == AgentType.DRONE.value:
-            agents.append(DroneAgent(agent_id=i, start=(sr, sc)))
+            agents.append(DroneAgent(agent_id=i, start=(sr, sc), planner=planner))
         else:
-            agents.append(GroundAgent(agent_id=i, start=(sr, sc)))
+            agents.append(GroundAgent(agent_id=i, start=(sr, sc), planner=planner))
 
     print("=" * 52)
     print("  DARPA Exploration Simulation  (task-queue driven)")
@@ -231,7 +233,7 @@ def run_simulation(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DARPA exploration simulation")
-    parser.add_argument("path", nargs="?", default=None,
+    parser.add_argument("path", nargs="?", default="generated/darpa1.txt",
                         help="scenario file to load (default: built-in 10×10 map)")
     parser.add_argument("--steps", type=int, default=200, metavar="N",
                         help="maximum simulation steps (default: 200)")
