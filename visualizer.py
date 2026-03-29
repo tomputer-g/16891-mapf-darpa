@@ -57,10 +57,11 @@ class SimulationVisualizer:
     _KN_OBJECTIVE     = (1.00, 0.97, 0.40, 1.0)   # light gold   – free-standing objective (known)
     _FOG_COLOUR       = (0.55, 0.55, 0.55, 0.62)  # grey fog     – RGBA
 
-    def __init__(self, ground_truth: GroundTruthMap) -> None:
-        self._gt   = ground_truth
-        self._rows = ground_truth.rows
-        self._cols = ground_truth.cols
+    def __init__(self, ground_truth: GroundTruthMap, batch_mode: bool = False) -> None:
+        self._gt         = ground_truth
+        self._rows       = ground_truth.rows
+        self._cols       = ground_truth.cols
+        self._batch_mode = batch_mode
 
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(7, 7))
@@ -269,7 +270,8 @@ class SimulationVisualizer:
         self._title.set_text(f"Step {step}   |   {task_stats}")
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        plt.pause(0.05)
+        if not self._batch_mode:
+            plt.pause(0.05)
 
     def finalize(self, task_stats: str) -> None:
         """Mark simulation complete and block until the window is closed."""

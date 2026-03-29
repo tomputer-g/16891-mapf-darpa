@@ -38,7 +38,7 @@ def _post_observation_updates(agents, auctioneer, known_map, verbose: bool) -> N
             agent.path = []
             agent.status = AgentStatus.IDLE
 
-    auctioneer.update(agents, known_map)
+    auctioneer.update(agents, known_map, verbose=verbose)
 
     for agent in agents:
         if agent.status == AgentStatus.REPLANNING:
@@ -80,6 +80,7 @@ def run_simulation(
     verbose: bool = True,
     use_vis: bool = True,
     agent_type: str = "dog",
+    batch_mode: bool = False,
 ):
     ground_truth, agent_starts = load_scenario(path)
 
@@ -101,26 +102,29 @@ def run_simulation(
     print(f"  {len(agents)} agent(s) type={agent_type}   map {rows}×{cols}   [{path}]")
     print("=" * 60)
 
-    vis = SimulationVisualizer(ground_truth) if use_vis else None
+    vis = SimulationVisualizer(ground_truth, batch_mode=batch_mode) if use_vis else None
+
+    # In batch_mode suppress sub-step detail but keep the per-step summary.
+    sub_verbose = verbose and not batch_mode
 
     # Initial observation from start states
     for agent in agents:
         agent.observe(ground_truth, known_map)
-    _post_observation_updates(agents, auctioneer, known_map, verbose)
+    _post_observation_updates(agents, auctioneer, known_map, sub_verbose)
 
     for step in range(max_steps):
-        if verbose:
+        if verbose or batch_mode:
             statuses = "  ".join(
                 f"A{a.id}@{a.pos}[{a.status.name[0]}]" for a in agents
             )
-            print(f"\n─── Step {step:3d}  {statuses}  {auctioneer.stats()} ───")
+            print(f"Step {step:3d}  {statuses}  {auctioneer.stats()}")
 
         if vis is not None:
             vis.update(known_map, agents, step, auctioneer.stats())
 
         # Global microstep 1: everyone moves once
         moved_any = _do_microstep(
-            agents, ground_truth, known_map, auctioneer, verbose
+            agents, ground_truth, known_map, auctioneer, sub_verbose
         )
 
         # Global microstep 2: drones only
@@ -129,7 +133,7 @@ def run_simulation(
             if drone_agents:
                 moved_any = (
                     _do_microstep(
-                        drone_agents, ground_truth, known_map, auctioneer, verbose
+                        drone_agents, ground_truth, known_map, auctioneer, sub_verbose
                     )
                     or moved_any
                 )
@@ -140,7 +144,7 @@ def run_simulation(
             print(f"\n[DONE] All {auctioneer.stats()} — finished in {step + 1} steps.")
             break
 
-        if not moved_any and verbose:
+        if not moved_any and sub_verbose:
             print("  [STALL] No agents moved this step")
 
     else:
@@ -183,6 +187,11 @@ if __name__ == "__main__":
         default="dog",
         help="agent class to instantiate (default: dog)",
     )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="batch mode: one summary line per step, no plt.pause()",
+    )
     args = parser.parse_args()
 
     run_simulation(
@@ -191,4 +200,5 @@ if __name__ == "__main__":
         verbose=not args.quiet,
         use_vis=not args.no_vis,
         agent_type=args.agent_type,
+        batch_mode=args.batch,
     )

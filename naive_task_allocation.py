@@ -125,7 +125,7 @@ class NaiveTaskAuctioneer:
         return f"tasks total={total} done={done} assigned={assigned} waiting={waiting}"
 
     # ------------------------------------------------------------------
-    def auction(self, agents: List["Agent"], known_map: "KnownMap") -> None:
+    def auction(self, agents: List["Agent"], known_map: "KnownMap", verbose: bool = True) -> None:
         """
         Assign pending tasks to idle agents.
 
@@ -158,5 +158,6 @@ class NaiveTaskAuctioneer:
             task.assigned_to = winner.id
             idle_agents.remove(winner)
             winner.assign_task(task)
-            print(f"  [AUCTION] Task {task.task_id} → Agent {winner.id}"
-                  f"  target={task.target_loc}")
+            if verbose:
+                print(f"  [AUCTION] Task {task.task_id} → Agent {winner.id}"
+                      f"  target={task.target_loc}")

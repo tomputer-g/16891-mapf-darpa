@@ -165,7 +165,7 @@ class SequentialSingleItemAuctioneer:
             path=path,
         )
 
-    def auction(self, agents: List[Agent], known_map: KnownMap) -> None:
+    def auction(self, agents: List[Agent], known_map: KnownMap, verbose: bool = True) -> None:
         """
         Run a sequential single-item auction.
         """
@@ -199,10 +199,11 @@ class SequentialSingleItemAuctioneer:
             winning_agent.status = AgentStatus.NAVIGATING
             available_agents.remove(winning_agent)
 
-            print(
-                f"  [AUCTION] Task {task.task_id} -> Agent {winning_agent.id} "
-                f"target={task.target_loc} bid_cost={winner.cost}"
-            )
+            if verbose:
+                print(
+                    f"  [AUCTION] Task {task.task_id} -> Agent {winning_agent.id} "
+                    f"target={task.target_loc} bid_cost={winner.cost}"
+                )
 
     # ------------------------------------------------------------------
     # Reauction support
@@ -279,7 +280,7 @@ class SequentialSingleItemAuctioneer:
                 return True
         return self._next_move_conflict(agents)
 
-    def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap) -> None:
+    def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap, verbose: bool = True) -> None:
         """
         Release all incomplete assignments and run a fresh auction round.
         """
@@ -294,13 +295,14 @@ class SequentialSingleItemAuctioneer:
             agent.path = []
             agent.status = AgentStatus.IDLE
 
-        print(f"  [REAUCTION] Global reauction triggered #{self.reauction_count}")
-        self.auction(agents, known_map)
+        if verbose:
+            print(f"  [REAUCTION] Global reauction triggered #{self.reauction_count}")
+        self.auction(agents, known_map, verbose=verbose)
 
     # ------------------------------------------------------------------
     # Convenience update hook for the main loop
     # ------------------------------------------------------------------
-    def update(self, agents: List[Agent], known_map: KnownMap) -> None:
+    def update(self, agents: List[Agent], known_map: KnownMap, verbose: bool = True) -> None:
         """
         One allocator update.
         """
@@ -314,6 +316,6 @@ class SequentialSingleItemAuctioneer:
                 agent.status = AgentStatus.IDLE
 
         if self.should_trigger_reauction(agents, known_map):
-            self.trigger_global_reauction(agents, known_map)
+            self.trigger_global_reauction(agents, known_map, verbose=verbose)
         else:
-            self.auction(agents, known_map)
+            self.auction(agents, known_map, verbose=verbose)

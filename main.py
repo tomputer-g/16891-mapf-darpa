@@ -37,7 +37,7 @@ def _post_observation_updates(agents, auctioneer, known_map, verbose: bool) -> N
             agent.path = []
             agent.status = AgentStatus.IDLE
 
-    auctioneer.auction(agents, known_map)
+    auctioneer.auction(agents, known_map, verbose=verbose)
 
     for agent in agents:
         if agent.status == AgentStatus.REPLANNING:
@@ -49,6 +49,7 @@ def run_simulation(
     path: str = "generated/darpa1.txt",
     max_steps: int = 200,
     verbose: bool = True,
+    batch_mode: bool = False,
 ) -> KnownMap:
     
     ground_truth = load_new_scenario(path)
@@ -71,19 +72,22 @@ def run_simulation(
           + (f"   [{path}]" if path else ""))
     print("=" * 52)
 
-    vis = SimulationVisualizer(ground_truth)
+    vis = SimulationVisualizer(ground_truth, batch_mode=batch_mode)
+
+    # In batch_mode suppress sub-step detail but keep the per-step summary.
+    sub_verbose = verbose and not batch_mode
 
     # Bootstrap
     for agent in agents:
         agent.observe(ground_truth, known_map)
-    _post_observation_updates(agents, auctioneer, known_map, verbose)
+    _post_observation_updates(agents, auctioneer, known_map, sub_verbose)
 
     for step in range(max_steps):
-        if verbose:
+        if verbose or batch_mode:
             statuses = "  ".join(
                 f"A{a.id}@{a.pos}[{a.status.name[0]}]" for a in agents
             )
-            print(f"\n─── Step {step:3d}  {statuses}  {auctioneer.stats()} ───")
+            print(f"Step {step:3d}  {statuses}  {auctioneer.stats()}")
 
         vis.update(known_map, agents, step, auctioneer.stats())
 
@@ -103,7 +107,7 @@ def run_simulation(
 
                 if ev.kind == EventType.PATH_BLOCKED:
                     blocked_at = ev.data['blocked_at']
-                    if verbose:
+                    if sub_verbose:
                         print(f"  [BLOCKED] Agent {agent.id} — cell {blocked_at}"
                               f" is obstacle; releasing task back to queue")
                     if agent.current_task:
@@ -119,7 +123,7 @@ def run_simulation(
             for agent in agents:
                 agent.observe(ground_truth, known_map)
 
-            _post_observation_updates(agents, auctioneer, known_map, verbose)
+            _post_observation_updates(agents, auctioneer, known_map, sub_verbose)
 
         if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
             vis.update(known_map, agents, step, auctioneer.stats())
@@ -141,5 +145,8 @@ if __name__ == "__main__":
                         help="maximum simulation steps (default: 200)")
     parser.add_argument("--quiet", action="store_true",
                         help="suppress per-step output")
+    parser.add_argument("--batch", action="store_true",
+                        help="batch mode: one summary line per step, no plt.pause()")
     args = parser.parse_args()
-    run_simulation(path=args.path, max_steps=args.steps, verbose=not args.quiet)
+    run_simulation(path=args.path, max_steps=args.steps, verbose=not args.quiet,
+                   batch_mode=args.batch)
