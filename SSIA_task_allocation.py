@@ -22,6 +22,7 @@ without requiring a full multi-agent constraint tree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from agents import Agent, AgentStatus, DroneAgent, plan_path
@@ -34,7 +35,7 @@ class Bid:
     """Single sealed bid for one task from one agent."""
     agent_id: int
     task_id: int
-    cost: int
+    cost: float
     path: List[Tuple[int, int]]
 
 
@@ -140,8 +141,10 @@ class SequentialSingleItemAuctioneer:
         known_map: KnownMap,
     ) -> Optional[Bid]:
         """
-        Bid equals marginal motion cost to reach the task from the agent's
-        current state on the current known map.
+        Bid equals (total_reward + collateral_exploration_reward) / time_taken.
+
+        collateral_exploration_reward counts unique UNKNOWN cells within the
+        3x3 neighbourhood of each cell along the planned path.
 
         Drones use drone path planning so they can fly over obstacles.
         Ground agents use normal path planning.
@@ -157,11 +160,29 @@ class SequentialSingleItemAuctioneer:
         if not path:
             return None
 
-        cost = max(0, len(path) - 1)
+        time_taken = math.ceil(max(1, len(path) - 1) / agent.speed)
+
+        assert(task.reward is not None)
+        total_reward = task.reward
+
+        explored: Set[Tuple[int, int]] = set()
+        for r, c in path:
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    nr, nc = r + dr, c + dc
+                    if (
+                        0 <= nr < known_map.rows
+                        and 0 <= nc < known_map.cols
+                        and known_map.state[nr][nc] == ObservationState.UNKNOWN
+                    ):
+                        explored.add((nr, nc))
+        collateral_exploration_reward = len(explored)
+
+        bid_value = (total_reward + collateral_exploration_reward) / time_taken
         return Bid(
             agent_id=agent.id,
             task_id=task.task_id,
-            cost=cost,
+            cost=bid_value,
             path=path,
         )
 
@@ -190,7 +211,7 @@ class SequentialSingleItemAuctioneer:
             if not bids:
                 continue
 
-            winner = min(bids, key=lambda b: (b.cost, b.agent_id))
+            winner = max(bids, key=lambda b: (b.cost, b.agent_id))
             winning_agent = next(a for a in available_agents if a.id == winner.agent_id)
 
             task.assigned_to = winning_agent.id

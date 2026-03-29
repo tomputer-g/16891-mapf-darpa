@@ -164,6 +164,7 @@ class Agent:
         self.status        = AgentStatus.IDLE
         self.current_task: Optional[Task] = None
         self._planner:     'CBS'          = planner
+        self.speed: int    = 1
 
     @property
     def path(self) -> List[Tuple[int, int]]:
@@ -244,6 +245,7 @@ class DroneAgent(Agent):
         obs_radius: int = 2,
     ) -> None:
         super().__init__(agent_id, planner, start, AgentType.DRONE, obs_radius)
+        self.speed = 3
 
     @property
     def path(self) -> List[Tuple[int, int]]:
@@ -318,6 +320,7 @@ class GroundAgent(Agent):
         obs_radius: int = 1,
     ) -> None:
         super().__init__(agent_id, planner, start, AgentType.GROUND, obs_radius)
+        self.speed = 1
 
     def observe(self, ground_truth: GroundTruthMap, known_map: KnownMap) -> None:
         r, c = self.pos

@@ -44,6 +44,7 @@ class Task(ABC):
         self.priority:     float         = priority
         self.completed:    bool          = False
         self.assigned_to:  Optional[int] = None   # agent id
+        self.reward:     Optional[float] = None
 
     @property
     @abstractmethod
@@ -77,6 +78,7 @@ class ExplorationTask(Task):
     def __init__(self, loc: Tuple[int, int], priority: float = 1.0) -> None:
         super().__init__(priority)
         self._target_loc = loc
+        self.reward = 1.0
 
     @property
     def target_loc(self) -> Tuple[int, int]:
