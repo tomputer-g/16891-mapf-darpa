@@ -3,7 +3,6 @@ Tasks and task queue for the DARPA exploration simulation.
 
   Task            – abstract base class for all assignable work items
   ExplorationTask – navigate to and observe an UNKNOWN frontier cell
-  TaskAuctioneer  – owns the queue; assigns work via auction rounds
 """
 
 from __future__ import annotations

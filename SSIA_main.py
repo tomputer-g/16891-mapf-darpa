@@ -12,6 +12,7 @@ from typing import List, Optional
 from agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
 from maps import KnownMap, load_new_scenario
 from sim_types import AgentType
+from planner import CBS
 from SSIA_task_allocation import SequentialSingleItemAuctioneer
 from tasks import TriageTask
 from visualizer import SimulationVisualizer
@@ -99,7 +100,7 @@ def _do_microstep(agents, ground_truth, known_map, auctioneer, verbose: bool) ->
 
 
 def run_simulation(
-    path: Optional[str] = "generated/darpa1.txt",
+    path: str = "generated/darpa1.txt",
     max_steps: int = 200,
     verbose: bool = True,
     use_vis: bool = True,
@@ -109,13 +110,14 @@ def run_simulation(
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
     auctioneer = SequentialSingleItemAuctioneer()
+    planner = CBS(rows, cols)
 
     agents: List[Agent] = []
     for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
         if atype == AgentType.DRONE.value:
-            agents.append(DroneAgent(agent_id=i, start=(sr, sc)))
+            agents.append(DroneAgent(agent_id=i, planner=planner, start=(sr, sc)))
         else:
-            agents.append(GroundAgent(agent_id=i, start=(sr, sc)))
+            agents.append(GroundAgent(agent_id=i, planner=planner, start=(sr, sc)))
 
     print("=" * 60)
     print("  SSIA Exploration Simulation")
