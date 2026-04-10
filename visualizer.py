@@ -63,7 +63,7 @@ class SimulationVisualizer:
         self._cols = ground_truth.cols
 
         plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(7, 7))
+        self.fig, self.ax = plt.subplots(figsize=(14, 14))
         self.fig.patch.set_facecolor("#1a1a2e")  # type: ignore[union-attr]
         self.ax.set_facecolor("#1a1a2e")
         self.fig.canvas.manager.set_window_title("DARPA Exploration Sim")  # type: ignore[union-attr]
@@ -76,7 +76,7 @@ class SimulationVisualizer:
         # Subtle grid lines at cell boundaries
         self.ax.set_xticks(np.arange(-0.5, self._cols, 1), minor=True)
         self.ax.set_yticks(np.arange(-0.5, self._rows, 1), minor=True)
-        self.ax.grid(which="minor", color="#2a2a4a", linewidth=0.6, zorder=0)
+        self.ax.grid(which="minor", color="#2a2a4a", linewidth=0.8, zorder=0)
         self.ax.tick_params(which="both", bottom=False, left=False,
                             labelbottom=False, labelleft=False)
 
@@ -104,7 +104,7 @@ class SimulationVisualizer:
         self._agent_artists: Dict[int, dict] = {}
 
         self._title = self.ax.set_title(
-            "Initialising…", color="white", fontsize=10, pad=8)
+            "Initialising\u2026", color="white", fontsize=40, fontweight="bold", pad=12)
 
         self._legend_handle = self._build_legend([])
         plt.tight_layout()
@@ -201,7 +201,7 @@ class SimulationVisualizer:
         if hasattr(self, "_legend_handle") and self._legend_handle:
             self._legend_handle.remove()
         legend = self.ax.legend(
-            handles=elements, loc="upper right", fontsize=7.5,
+            handles=elements, loc="upper right", fontsize=28,
             facecolor="#222244", edgecolor="#555577", labelcolor="white")
         legend.set_zorder(10)
         self._legend_handle = legend
@@ -226,7 +226,7 @@ class SimulationVisualizer:
             markeredgecolor="black", markeredgewidth=1.0, zorder=6)
         label = self.ax.text(
             0, 0, str(agent.id),
-            color="white", fontsize=6, fontweight="bold",
+            color="white", fontsize=24, fontweight="bold",
             ha="center", va="center", zorder=7)
 
         self._agent_artists[agent.id] = {

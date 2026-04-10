@@ -238,7 +238,7 @@ The high-level CBS search maintains a priority queue of constraint tree (CT) nod
 The root node plans each agent independently with no constraints. If collisions exist, the first collision is selected, and two child nodes are generated---one constraining each involved agent. The search expands nodes in order of $(cost, |collisions|)$ and terminates when a collision-free solution is found or a maximum of 5{,}000 node expansions is reached.
 
 \subsubsection{Drone Handling}
-Drone agents are tracked separately and excluded from CBS collision resolution, since they operate at a different altitude than ground agents. Drones are planned independently using Manhattan-heuristic A* with no inter-agent constraints.
+Drone agents are excluded from CBS collision resolution entirely. Because drones fly over all terrain---including obstacles and buildings---they face no shared-space conflicts with ground agents. Furthermore, when multiple drones are present, each can operate at a distinct flight altitude, eliminating the possibility of inter-drone collisions. Consequently, only ground agents participate in the CBS constraint tree; drones are planned independently using Manhattan-heuristic A* with no inter-agent constraints.
 
 The CBS high-level search is summarized in Algorithm~\ref{alg:cbs}.
 
@@ -289,6 +289,15 @@ We developed a procedural scenario generator that produces randomized maps with 
 
 \subsection{Test Scenarios}
 
+Figure~\ref{fig:all_maps} shows the ground-truth layouts of all seven DARPA-scale maps. Obstacles (black), buildings (blue/orange), objectives (yellow), and agent start positions (triangles for drones, squares for ground) are visible. Scenarios (c)--(g) feature a starting zone at the bottom edge, mirroring the staging-area deployment in the actual DARPA Triage Challenge.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/all_maps.png}
+    \caption{Ground-truth layouts of all seven DARPA-scale test maps. Top row: (a)~\texttt{darpa1}---open 15$\times$15 with interior starts; (b)~\texttt{darpa2}---building-heavy 15$\times$15; (c)~\texttt{darpa3}---15$\times$15 layout of (a) with obstacle starting zone; (d)~\texttt{darpa4}---layout of (b) with starting zone. Bottom row: (e)~\texttt{darpa5}---16$\times$15 maze with single-width corridors; (f)~\texttt{darpa6}---22$\times$21 maze with 2-block-wide passages; (g)~\texttt{darpa7}---22$\times$21 open layout with high task density. Blue/orange cells are buildings (empty/occupied); yellow cells are free-standing objectives. Triangles mark drone starts; squares mark ground agent starts.}
+    \label{fig:all_maps}
+\end{figure*}
+
 We evaluate on two categories of maps:
 \begin{itemize}
     \item \textbf{Small maps} ($8 \times 8$): 23 pre-generated instances (\texttt{test\_0} through \texttt{test\_22}) with 5 agents, primarily for unit testing and debugging the planning pipeline.
@@ -296,11 +305,13 @@ We evaluate on two categories of maps:
     \begin{itemize}
         \item \texttt{darpa1} ($15 \times 15$): Open layout with scattered obstacles, 4 free-standing objectives, 4 buildings. Agents start in the interior.
         \item \texttt{darpa2} ($15 \times 15$): Building-heavy variant with 0 free-standing objectives and 6 buildings (some occupied). Agents start in the interior.
-        \item \texttt{darpa3} ($16 \times 15$): Same as \texttt{darpa1} but with an obstacle-filled bottom row; agents start in a 5-cell gap along this row, forcing coordinated egress.
-        \item \texttt{darpa4} ($16 \times 15$): Same treatment applied to \texttt{darpa2}---obstacle spawn row with constrained start positions.
-        \item \texttt{darpa5} ($16 \times 15$): Maze configuration with single-width corridors and the obstacle spawn row. Tests narrow-passage coordination.
-        \item \texttt{darpa6} ($22 \times 21$): Larger maze with 2-block-wide pathways, 4 objectives, 4 buildings. Tests scalability on bigger maps.
-        \item \texttt{darpa7} ($22 \times 21$): Large open layout (no maze) with 8 objectives and 6 buildings. Tests high task density.
+        \item \texttt{darpa3} ($16 \times 15$): Same as \texttt{darpa1} but with an obstacle-filled bottom row containing a 5-cell gap that serves as a \emph{starting zone}; all agents begin there and must coordinate egress into the map.
+        \item \texttt{darpa4} ($16 \times 15$): Same treatment applied to \texttt{darpa2}---obstacle spawn row with starting zone.
+        \item \texttt{darpa5} ($16 \times 15$): Maze configuration with single-width corridors and the starting zone. Tests narrow-passage coordination.
+        \item \texttt{darpa6} ($22 \times 21$): Larger maze with 2-block-wide pathways, 4 objectives, 4 buildings, and a starting zone. Tests scalability on bigger maps.
+        \item \texttt{darpa7} ($22 \times 21$): Large open layout (no maze) with 8 objectives, 6 buildings, and a starting zone. Tests high task density.
+    \end{itemize}
+    Scenarios \texttt{darpa3}--\texttt{darpa7} are modeled after the actual DARPA Triage Challenge, where all robots deploy from a designated staging area at the edge of the disaster site and must fan out to explore the unknown environment.
     \end{itemize}
 \end{itemize}
 
@@ -321,13 +332,12 @@ All configurations use the same simulation harness, agent models, and map repres
 
 Figure~\ref{fig:visualization} shows a representative simulation snapshot on the \texttt{darpa1} map. The visualization renders the ground truth under a fog-of-war overlay, with observed cells shown at full opacity and unexplored regions grayed out. Agent paths are drawn as dashed lines to their current task targets.
 
-\begin{figure}[t]
+\begin{figure*}[t]
     \centering
-    % Replace with actual screenshot
-    \includegraphics[width=\columnwidth]{figures/visualization.png}
+    \includegraphics[width=0.55\textwidth]{figures/visualization.png}
     \caption{Simulation visualization on the \texttt{darpa1} scenario. Ground agents (squares) and drone agents (triangles) explore the map collaboratively. Fog-of-war covers unexplored regions. Gold stars mark current task targets, and dashed cyan lines show planned paths.}
     \label{fig:visualization}
-\end{figure}
+\end{figure*}
 
 The SSIA allocator exhibits several qualitative advantages over the greedy baseline:
 \begin{itemize}
@@ -384,7 +394,7 @@ Key observations:
     \item SSIA consistently outperforms the greedy baseline across all seven maps, achieving 1.1--2.2$\times$ speedup in total steps.
     \item The performance gap is largest on the open, large-scale maps (\texttt{darpa6}: 107 vs.\ 59 steps; \texttt{darpa7}: 115 vs.\ 53 steps), where reward-shaped bidding enables effective role specialization across the wider space.
     \item The gap narrows on the maze map (\texttt{darpa5}: 49 vs.\ 44 steps), where narrow corridors constrain both methods similarly.
-    \item Zero reauctions were triggered in all SSIA runs, indicating that CBS-based collision avoidance and reward-shaped allocation produce stable initial assignments.
+    \item Zero reauctions were triggered in all SSIA runs. This is expected for two reinforcing reasons. First, CBS proactively resolves all ground-agent conflicts at planning time---after each auction round, CBS jointly replans collision-free paths \emph{before} agents move, so the movement-level conflict detector never fires. Second, with only three ground agents per scenario, CBS easily finds solutions within the 5{,}000-node expansion limit, so the CBS-failure reauction path is never reached. Additionally, reward-shaped bidding naturally disperses agents across the map (drones explore distant frontiers while ground agents handle nearby triage), further reducing spatial contention.
 \end{enumerate}
 
 \subsection{Effect of Reward Shaping}
@@ -445,7 +455,7 @@ Several directions for future work are promising:
 
 \textbf{Tom Gao}: CBS planner implementation, map representation and scenario generation, visualization system, experimental evaluation, integration of CBS with SSIA and greedy method.
 
-\textbf{Joshua Pen}: SSIA task allocation with reward-shaped bidding, agent model, SSIA simulation harness, scenario design, triage task integration.
+\textbf{Joshua Pen}: SSIA task allocation with reward-shaped bidding, agent model, SSIA simulation harness, scenario design (darpa2--darpa7 starting-zone and maze maps), triage task integration, CBS integration with both SSIA and greedy allocators, drone flight model (obstacle and building traversal).
 
 \textbf{Ranai Srivastav}: Greedy baseline implementation, task type definitions, building investigation logic, experimental evaluation and analysis.
 
