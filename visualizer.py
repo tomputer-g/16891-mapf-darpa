@@ -104,7 +104,7 @@ class SimulationVisualizer:
         self._agent_artists: Dict[int, dict] = {}
 
         self._title = self.ax.set_title(
-            "Initialising\u2026", color="white", fontsize=40, fontweight="bold", pad=12)
+            "Initialising\u2026", color="white", fontsize=14, fontweight="bold", pad=8)
 
         self._legend_handle = self._build_legend([])
         plt.tight_layout()
@@ -201,7 +201,7 @@ class SimulationVisualizer:
         if hasattr(self, "_legend_handle") and self._legend_handle:
             self._legend_handle.remove()
         legend = self.ax.legend(
-            handles=elements, loc="upper right", fontsize=28,
+            handles=elements, loc="upper right", fontsize=9,
             facecolor="#222244", edgecolor="#555577", labelcolor="white")
         legend.set_zorder(10)
         self._legend_handle = legend
@@ -225,8 +225,8 @@ class SimulationVisualizer:
             [], [], marker, color=color, markersize=msize,
             markeredgecolor="black", markeredgewidth=1.0, zorder=6)
         label = self.ax.text(
-            0, 0, str(agent.id),
-            color="white", fontsize=24, fontweight="bold",
+            0, 0, "",
+            color="white", fontsize=0,
             ha="center", va="center", zorder=7)
 
         self._agent_artists[agent.id] = {
