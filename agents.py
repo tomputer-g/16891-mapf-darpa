@@ -124,9 +124,6 @@ def plan_path(
                 continue
             if (not drone) and (not known_map.is_passable(nb)):
                 continue
-            # Drones cannot enter buildings
-            if drone and known_map.is_building(nb):
-                continue
 
             g = curr['g'] + 1
             h = h_val.get(nb, 0)
@@ -292,7 +289,7 @@ class DroneAgent(Agent):
         return False
 
     def step(self, known_map: KnownMap) -> Optional[Event]:
-        """Move one cell along the planned path; drones fly over obstacles but not buildings."""
+        """Move one cell along the planned path; drones fly over obstacles and buildings."""
         if self.status in (AgentStatus.IDLE, AgentStatus.REPLANNING):
             return None
         if len(self.path) < 2:

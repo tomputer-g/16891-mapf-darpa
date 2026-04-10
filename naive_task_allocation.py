@@ -24,9 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from agents import Agent
+from agents import Agent, DroneAgent
 from maps import KnownMap, ObservationState
-from tasks import ExplorationTask, Task
+from planner import CBS
+from sim_types import AgentType, AgentStatus
+from tasks import ExplorationTask, Task, TriageTask
 
 # ===========================================================================
 # Task Auctioneer
@@ -49,9 +51,12 @@ class NaiveTaskAuctioneer:
       - Bundle tasks into tours (TSP) for efficiency.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cbs: Optional[CBS] = None) -> None:
         self._tasks:      List[Task]            = []
         self._known_locs: Set[Tuple[int, int]]  = set()   # dedup ExplorationTasks
+        self._triage_locs: Set[Tuple[int, int]] = set()   # dedup TriageTasks
+        self._invest_locs: Set[Tuple[int, int]] = set()   # dedup building investigations
+        self._cbs: Optional[CBS] = cbs
 
     # ------------------------------------------------------------------
     def register(self, task: Task) -> bool:
@@ -66,6 +71,47 @@ class NaiveTaskAuctioneer:
             self._known_locs.add(task.target_loc)
         self._tasks.append(task)
         return True
+
+    def add_revealed_triage_tasks(self, known_map: "KnownMap", ground_truth) -> int:
+        """Create tasks for revealed objectives and buildings."""
+        new_count = 0
+        for loc in ground_truth.objectives:
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OBJECTIVE and loc not in self._triage_locs:
+                task = TriageTask(loc)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
+        for loc in ground_truth.buildings:
+            r, c = loc
+            state = known_map.state[r][c]
+            if state in (ObservationState.BUILDING, ObservationState.OCCUPIED_BUILDING) and loc not in self._invest_locs:
+                task = TriageTask(loc, ground_only=True, dwell_steps=1)
+                task._is_investigation = True
+                self._invest_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
+        return new_count
+
+    def add_confirmed_building_triage(self, known_map: "KnownMap") -> int:
+        """Create triage tasks for buildings confirmed occupied."""
+        done_investigations: Set[Tuple[int, int]] = set()
+        for t in self._tasks:
+            if (isinstance(t, TriageTask)
+                    and getattr(t, '_is_investigation', False)
+                    and t.completed):
+                done_investigations.add(t.target_loc)
+        new_count = 0
+        for loc in list(self._invest_locs):
+            if loc not in done_investigations:
+                continue
+            r, c = loc
+            if known_map.state[r][c] == ObservationState.OCCUPIED_BUILDING and loc not in self._triage_locs:
+                task = TriageTask(loc, ground_only=True)
+                self._triage_locs.add(loc)
+                self._tasks.append(task)
+                new_count += 1
+        return new_count
 
     def add_frontier_tasks(self, known_map: "KnownMap") -> int:
         """
@@ -149,14 +195,49 @@ class NaiveTaskAuctioneer:
             if not idle_agents:
                 break
 
+            # Filter out drones for ground_only tasks
+            eligible = [a for a in idle_agents
+                        if not (isinstance(task, TriageTask) and task.ground_only
+                                and a.agent_type != AgentType.GROUND)]
+            if not eligible:
+                continue
+
             def score(a: "Agent", t: Task = task) -> Tuple[float, float]:
                 r0, c0 = a.pos
                 r1, c1 = t.target_loc
                 return (t.priority, -(abs(r1 - r0) + abs(c1 - c0)))
 
-            winner = max(idle_agents, key=score)
+            winner = max(eligible, key=score)
             task.assigned_to = winner.id
             idle_agents.remove(winner)
             winner.assign_task(task)
-            print(f"  [AUCTION] Task {task.task_id} → Agent {winner.id}"
+            print(f"  [AUCTION] Task {task.task_id} -> Agent {winner.id}"
                   f"  target={task.target_loc}")
+        # CBS multi-agent replan for all navigating ground agents
+        self._cbs_replan_ground(agents, known_map)
+
+    def _cbs_replan_ground(self, agents: List["Agent"], known_map: "KnownMap") -> None:
+        """Run CBS jointly for all navigating ground agents to resolve collisions."""
+        if self._cbs is None:
+            return
+
+        ground_nav = [
+            a for a in agents
+            if not isinstance(a, DroneAgent)
+            and a.status == AgentStatus.NAVIGATING
+            and a.current_task is not None
+        ]
+        if len(ground_nav) < 2:
+            return
+
+        starts = {a.id: a.pos for a in ground_nav}
+        goals = {a.id: a.current_task.target_loc for a in ground_nav}
+
+        paths = self._cbs.plan(starts, goals, known_map, drone=False)
+        if paths is None:
+            return
+
+        for a in ground_nav:
+            if a.id in paths:
+                a.path = paths[a.id]
+                self._cbs.set_path(a.id, paths[a.id])

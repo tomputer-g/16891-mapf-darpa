@@ -51,7 +51,8 @@ def _update_triage_progress(agents, verbose: bool) -> None:
 
 from tasks import TriageTask, ExplorationTask
 
-def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose: bool) -> None:
+def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose: bool,
+                              run_auction: bool = True) -> None:
     """Common bookkeeping after agents have observed the map."""
 
     # 1. Add exploration frontier tasks
@@ -64,10 +65,7 @@ def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbo
     if new_triage and verbose:
         print(f"  [TASKS]   +{new_triage} task(s) revealed")
 
-    # 3. Update triage progress for agents dwelling at triage targets
-    _update_triage_progress(agents, verbose)
-
-    # 4. Promote investigated buildings to triage if ground confirmed occupied
+    # 3. Promote investigated buildings to triage if ground confirmed occupied
     new_bldg_triage = auctioneer.add_confirmed_building_triage(known_map)
     if new_bldg_triage and verbose:
         print(f"  [TRIAGE]  +{new_bldg_triage} occupied building triage task(s) confirmed")
@@ -103,7 +101,8 @@ def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbo
             agent.status = AgentStatus.IDLE
 
     # 6. Run auction for any idle agents
-    auctioneer.auction(agents, known_map)
+    if run_auction:
+        auctioneer.auction(agents, known_map)
 
     # 7. Replan if needed
     for agent in agents:
@@ -123,8 +122,8 @@ def run_simulation(
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
-    auctioneer = NaiveTaskAuctioneer()
     planner = CBS(rows, cols)
+    auctioneer = NaiveTaskAuctioneer(cbs=planner)
 
     agents = []
     for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
@@ -190,32 +189,40 @@ def run_simulation(
             for agent in agents:
                 agent.observe(ground_truth, known_map)
 
-            _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose)
+            # Update task bookkeeping but defer auction to after both microsteps
+            _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose,
+                                      run_auction=False)
 
         # Always tick triage progress even when no agent moved (agents
         # dwelling at their target don't produce a step event).
-        if not observed_this_step:
-            _update_triage_progress(agents, verbose)
-            # Release agents whose triage just finished
-            for agent in agents:
-                if agent.current_task and agent.current_task.completed:
-                    if verbose:
-                        task = agent.current_task
-                        if isinstance(task, TriageTask) and getattr(task, '_is_investigation', False):
-                            print(
-                                f"  [INVESTIGATED] Agent {agent.id} checked building "
-                                f"at {task.target_loc}"
-                            )
-                        elif isinstance(task, TriageTask):
-                            print(
-                                f"  [TRIAGE DONE] Agent {agent.id} finished triage task "
-                                f"{task.task_id} at {task.target_loc}"
-                            )
-                    agent.current_task = None
-                    agent.path = []
-                    agent.status = AgentStatus.IDLE
-            # Run auction for newly idle agents
-            auctioneer.auction(agents, known_map)
+        _update_triage_progress(agents, verbose)
+
+        # Release agents whose triage just finished
+        for agent in agents:
+            if agent.current_task and agent.current_task.completed:
+                if verbose:
+                    task = agent.current_task
+                    if isinstance(task, TriageTask) and getattr(task, '_is_investigation', False):
+                        print(
+                            f"  [INVESTIGATED] Agent {agent.id} checked building "
+                            f"at {task.target_loc}"
+                        )
+                    elif isinstance(task, TriageTask):
+                        print(
+                            f"  [TRIAGE DONE] Agent {agent.id} finished triage task "
+                            f"{task.task_id} at {task.target_loc}"
+                        )
+                agent.current_task = None
+                agent.path = []
+                agent.status = AgentStatus.IDLE
+        # Run auction once per step for newly idle agents
+        auctioneer.auction(agents, known_map)
+
+        # Replan agents that got new tasks this step
+        for agent in agents:
+            if agent.status == AgentStatus.REPLANNING:
+                if not agent.replan(known_map) and verbose:
+                    print(f"  [WARN] Agent {agent.id} cannot reach task target yet")
 
         if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
             if vis:

@@ -51,11 +51,8 @@ def _update_triage_progress(agents, verbose: bool) -> None:
 
 def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose: bool) -> None:
     """Common bookkeeping after agents have observed the map."""
-    # 1. Tick triage dwell progress (not handled by auctioneer)
-    _update_triage_progress(agents, verbose)
-
-    # 2. Delegate task creation, sweep, release, reauction, and auction
-    #    to the auctioneer's update() — single responsibility.
+    # Delegate task creation, sweep, release, reauction, and auction
+    # to the auctioneer's update() — single responsibility.
     auctioneer.update(agents, known_map, ground_truth=ground_truth,
                       verbose=verbose)
 
@@ -109,8 +106,8 @@ def run_simulation(
 
     rows, cols = ground_truth.rows, ground_truth.cols
     known_map = KnownMap(rows, cols)
-    auctioneer = SequentialSingleItemAuctioneer()
     planner = CBS(rows, cols)
+    auctioneer = SequentialSingleItemAuctioneer(cbs=planner)
 
     agents: List[Agent] = []
     for i, (sr, sc, atype) in enumerate(ground_truth.agent_starts):
@@ -157,11 +154,10 @@ def run_simulation(
                 or moved_any
                 )
 
-        # If nobody moved, tick triage progress for dwelling agents
-        if not moved_any:
-            _update_triage_progress(agents, verbose)
-            auctioneer.update(agents, known_map, ground_truth=ground_truth,
-                              verbose=verbose)
+        # Always tick triage progress (agents dwelling at targets don't move)
+        _update_triage_progress(agents, verbose)
+        auctioneer.update(agents, known_map, ground_truth=ground_truth,
+                          verbose=verbose)
 
         if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
             if vis is not None:

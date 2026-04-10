@@ -26,6 +26,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from agents import Agent, AgentStatus, DroneAgent, plan_path
 from maps import KnownMap, ObservationState
+from planner import CBS
 from sim_types import AgentType
 from tasks import ExplorationTask, TriageTask, Task
 
@@ -54,12 +55,14 @@ class SequentialSingleItemAuctioneer:
     Availability-constrained sequential single-item auctioneer.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cbs: Optional[CBS] = None) -> None:
         self._tasks: List[Task] = []
         self._known_locs: Set[Tuple[int, int]] = set()
         self._triage_locs: Set[Tuple[int, int]] = set()
         self._invest_locs: Set[Tuple[int, int]] = set()
         self.reauction_count: int = 0
+        self._cbs: Optional[CBS] = cbs
+        self._in_reauction: bool = False
 
     # ------------------------------------------------------------------
     # Task bookkeeping
@@ -311,6 +314,11 @@ class SequentialSingleItemAuctioneer:
                 f"target={task.target_loc} bid_score={winner.score:.2f}"
             )
 
+        # CBS multi-agent replan for all navigating ground agents
+        if not self._in_reauction and not self._cbs_replan_ground(agents, known_map):
+            print("  [CBS] Multi-agent replan failed; triggering reauction")
+            self.trigger_global_reauction(agents, known_map)
+
     # ------------------------------------------------------------------
     # Reauction support
     # ------------------------------------------------------------------
@@ -416,7 +424,42 @@ class SequentialSingleItemAuctioneer:
             agent.status = AgentStatus.IDLE
 
         print(f"  [REAUCTION] Global reauction triggered #{self.reauction_count}")
+        self._in_reauction = True
         self.auction(agents, known_map)
+        self._in_reauction = False
+
+    def _cbs_replan_ground(self, agents: List[Agent], known_map: KnownMap) -> bool:
+        """Run CBS jointly for all navigating ground agents to resolve collisions.
+
+        Drone agents are excluded — they fly at a different altitude and don't
+        collide with ground agents.
+
+        Returns True if paths are collision-free, False if CBS failed.
+        """
+        if self._cbs is None:
+            return True
+
+        ground_nav = [
+            a for a in agents
+            if not isinstance(a, DroneAgent)
+            and a.status == AgentStatus.NAVIGATING
+            and a.current_task is not None
+        ]
+        if len(ground_nav) < 2:
+            return True
+
+        starts = {a.id: a.pos for a in ground_nav}
+        goals = {a.id: a.current_task.target_loc for a in ground_nav}
+
+        paths = self._cbs.plan(starts, goals, known_map, drone=False)
+        if paths is None:
+            return False
+
+        for a in ground_nav:
+            if a.id in paths:
+                a.path = paths[a.id]
+                self._cbs.set_path(a.id, paths[a.id])
+        return True
 
     # ------------------------------------------------------------------
     # Convenience update hook for the main loop
