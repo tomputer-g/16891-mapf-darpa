@@ -34,10 +34,10 @@ from tasks import ExplorationTask, TriageTask, Task
 # Reward values used in the bid formula: reward / (path_length + dwell_time)
 _TASK_REWARD = {
     ExplorationTask: 1,
-    TriageTask: 3,
+    TriageTask: 8,
 }
 
-# Dwell steps by agent type (must stay in sync with SSIA_main._TRIAGE_DWELL)
+# Dwell steps by agent type (must stay in sync with SSIA_collateral_main._TRIAGE_DWELL)
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
 
 
@@ -63,6 +63,10 @@ class SequentialSingleItemAuctioneer:
         self.reauction_count: int = 0
         self._cbs: Optional[CBS] = cbs
         self._in_reauction: bool = False
+        # Cells predicted to be observed by agents following their winning paths
+        self._predicted_revealed: Set[Tuple[int, int]] = set()
+        self._map_rows: int = 0
+        self._map_cols: int = 0
 
     # ------------------------------------------------------------------
     # Task bookkeeping
@@ -176,6 +180,49 @@ class SequentialSingleItemAuctioneer:
         )
 
     # ------------------------------------------------------------------
+    # Collateral exploration helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _path_footprint(
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+        rows: int,
+        cols: int,
+    ) -> Set[Tuple[int, int]]:
+        """Return all cells that would be observed by an agent walking *path*."""
+        revealed: Set[Tuple[int, int]] = set()
+        for r, c in path:
+            for dr in range(-obs_radius, obs_radius + 1):
+                for dc in range(-obs_radius, obs_radius + 1):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        revealed.add((nr, nc))
+        return revealed
+
+    def _collateral_bonus(
+        self,
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+    ) -> float:
+        """Count all new cells that would be revealed by *path* but are
+        NOT already in _predicted_revealed.  Each new cell adds +0.5."""
+        footprint = self._path_footprint(
+            path, obs_radius, self._map_rows, self._map_cols
+        )
+        new_cells = footprint - self._predicted_revealed
+        return len(new_cells) * 0.25
+
+    def _mark_path_revealed(
+        self,
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+    ) -> None:
+        """Add the observation footprint of *path* to _predicted_revealed."""
+        self._predicted_revealed |= self._path_footprint(
+            path, obs_radius, self._map_rows, self._map_cols
+        )
+
+    # ------------------------------------------------------------------
     # Bidding and assignment
     # ------------------------------------------------------------------
     def available_agents(self, agents: Iterable[Agent]) -> List[Agent]:
@@ -200,11 +247,10 @@ class SequentialSingleItemAuctioneer:
         known_map: KnownMap,
     ) -> Optional[Bid]:
         """
-        Bid equals marginal motion cost to reach the task from the agent's
-        current state on the current known map.
+        Bid equals (reward + collateral_bonus) / (path_length + dwell_time).
 
-        Drones use drone path planning so they can fly over obstacles.
-        Ground agents use normal path planning.
+        collateral_bonus = count of pending exploration tasks that would be
+        newly revealed along the path but are not yet in _predicted_revealed.
         """
         use_drone_path = isinstance(agent, DroneAgent)
 
@@ -222,6 +268,7 @@ class SequentialSingleItemAuctioneer:
         if use_drone_path:
             path_len = path_len / 2
         reward = _TASK_REWARD.get(type(task), 1)
+        collateral = self._collateral_bonus(path, agent.obs_radius)
 
         # Dwell time: triage tasks require dwelling at the target
         if isinstance(task, TriageTask):
@@ -232,7 +279,7 @@ class SequentialSingleItemAuctioneer:
         else:
             dwell = 0
 
-        score = reward / (path_len + dwell)
+        score = (reward + collateral) / (path_len + dwell)
         return Bid(
             agent_id=agent.id,
             task_id=task.task_id,
@@ -277,6 +324,21 @@ class SequentialSingleItemAuctioneer:
         if not available_agents:
             return
 
+        # Reset predicted-revealed map for this auction round
+        self._map_rows = known_map.rows
+        self._map_cols = known_map.cols
+        self._predicted_revealed = set()
+        for r in range(known_map.rows):
+            for c in range(known_map.cols):
+                if known_map.state[r][c] != ObservationState.UNKNOWN:
+                    self._predicted_revealed.add((r, c))
+
+        # Seed with footprints of currently-assigned (busy) agents' paths
+        busy_agents = [a for a in agents if a not in available_agents]
+        for agent in busy_agents:
+            if agent.path and len(agent.path) > 1:
+                self._mark_path_revealed(agent.path, agent.obs_radius)
+
         available_tasks = sorted(
             pending,
             key=lambda t: self._auction_priority(t, available_agents),
@@ -308,6 +370,9 @@ class SequentialSingleItemAuctioneer:
             winning_agent.path = winner.path
             winning_agent.status = AgentStatus.NAVIGATING
             available_agents.remove(winning_agent)
+
+            # Mark this path's footprint as predicted-revealed
+            self._mark_path_revealed(winner.path, winning_agent.obs_radius)
 
             print(
                 f"  [AUCTION] Task {task.task_id} -> Agent {winning_agent.id} "

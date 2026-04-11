@@ -1,0 +1,7 @@
+generated/darpa1.txt: 26
+generated/darpa2.txt: 35
+generated/darpa3.txt: 27
+generated/darpa4.txt: 40
+generated/darpa5.txt: 38
+generated/darpa6.txt: 60
+generated/darpa7.txt: 48

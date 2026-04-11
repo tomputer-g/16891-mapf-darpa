@@ -1,22 +1,18 @@
 """
 Auction and task allocation for the DARPA exploration simulation.
 
-Availability-Constrained Sequential Single-Item Auction with Global
-Reauction Trigger
+Sequential Single-Item Concurrent Auction (SSICA)
 ---------------------------------------------------------------
-Tasks are auctioned one at a time. Only robots that are currently
-available, meaning they do not hold an active incomplete task, may bid.
-Each bid is the marginal motion cost to reach the task target on the
-current known map. The lowest feasible bid wins.
+All agents bid on every task, even if they already have tasks in their
+queue.  Each agent maintains an ordered task queue.  The bid for a new
+task equals the cumulative cost of all tasks already in the queue PLUS
+the path cost from the last queued task's target to the new task's
+target.  The highest-scoring bid wins; the task is appended to the
+winner's queue.
 
 Because the environment is only partially known, assignments are monitored
 continuously. If a path becomes infeasible or a simple inter-robot motion
-conflict is detected, a global reauction is triggered. All incomplete
-non-executing work is released, agent-task assignments are cleared, and a
-new auction round is run from the robots' current states.
-
-This gives a lightweight event-driven allocator for dynamic exploration
-without requiring a full multi-agent constraint tree.
+conflict is detected, a global reauction is triggered.
 """
 
 from __future__ import annotations
@@ -34,10 +30,10 @@ from tasks import ExplorationTask, TriageTask, Task
 # Reward values used in the bid formula: reward / (path_length + dwell_time)
 _TASK_REWARD = {
     ExplorationTask: 1,
-    TriageTask: 3,
+    TriageTask: 8,
 }
 
-# Dwell steps by agent type (must stay in sync with SSIA_main._TRIAGE_DWELL)
+# Dwell steps by agent type (must stay in sync with SSICA_main._TRIAGE_DWELL)
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
 
 
@@ -48,11 +44,16 @@ class Bid:
     task_id: int
     score: float
     path: List[Tuple[int, int]]
+    effective_reward: float = 0.0
 
 
 class SequentialSingleItemAuctioneer:
     """
-    Availability-constrained sequential single-item auctioneer.
+    Sequential single-item concurrent auctioneer with per-agent task queues.
+
+    Every agent bids on every unassigned task.  Bid cost accounts for all
+    tasks already in the agent's queue: cumulative queue cost + path from
+    the last queued target to the new task target.
     """
 
     def __init__(self, cbs: Optional[CBS] = None) -> None:
@@ -63,6 +64,19 @@ class SequentialSingleItemAuctioneer:
         self.reauction_count: int = 0
         self._cbs: Optional[CBS] = cbs
         self._in_reauction: bool = False
+        # Per-agent task queue: agent_id -> list of queued Tasks (first = current)
+        self._agent_queues: Dict[int, List[Task]] = {}
+        # Cached cumulative cost per agent (sum of path+dwell for queued tasks)
+        self._agent_queue_cost: Dict[int, float] = {}
+        # Cached cumulative reward per agent (sum of rewards for queued tasks)
+        self._agent_queue_reward: Dict[int, float] = {}
+        # Cached "end location" — target of the last task in the queue
+        self._agent_queue_end: Dict[int, Optional[Tuple[int, int]]] = {}
+        # Cells predicted to be observed by agents following their queued paths
+        self._predicted_revealed: Set[Tuple[int, int]] = set()
+        # Map dimensions (set on first auction call)
+        self._map_rows: int = 0
+        self._map_cols: int = 0
 
     # ------------------------------------------------------------------
     # Task bookkeeping
@@ -162,7 +176,35 @@ class SequentialSingleItemAuctioneer:
         for task in self._tasks:
             if not task.completed and task.check_completion(known_map):
                 count += 1
+        # Purge completed tasks from the middle of agent queues
+        if count:
+            self._purge_completed_from_queues()
         return count
+
+    def _purge_completed_from_queues(self) -> None:
+        """Remove collaterally-completed tasks from agent queues and
+        recalculate cached queue costs."""
+        for aid in list(self._agent_queues):
+            queue = self._agent_queues[aid]
+            # Subtract costs of completed non-front tasks before removing
+            removed = [
+                t for i, t in enumerate(queue)
+                if i != 0 and t.completed
+            ]
+            for t in removed:
+                self._agent_queue_cost[aid] -= getattr(t, '_queued_marginal_cost', 0)
+                self._agent_queue_reward[aid] -= getattr(t, '_queued_effective_reward', 0)
+            self._agent_queues[aid] = [
+                t for i, t in enumerate(queue)
+                if i == 0 or not t.completed
+            ]
+            remaining = self._agent_queues[aid]
+            if remaining:
+                self._agent_queue_end[aid] = remaining[-1].target_loc
+            else:
+                self._agent_queue_cost[aid] = 0.0
+                self._agent_queue_reward[aid] = 0.0
+                self._agent_queue_end[aid] = None
 
     def stats(self) -> str:
         total = len(self._tasks)
@@ -176,23 +218,124 @@ class SequentialSingleItemAuctioneer:
         )
 
     # ------------------------------------------------------------------
+    # Per-agent queue helpers
+    # ------------------------------------------------------------------
+    def _ensure_agent(self, agent: Agent) -> None:
+        """Lazily initialize queue state for an agent."""
+        if agent.id not in self._agent_queues:
+            self._agent_queues[agent.id] = []
+            self._agent_queue_cost[agent.id] = 0.0
+            self._agent_queue_reward[agent.id] = 0.0
+            self._agent_queue_end[agent.id] = None
+
+    def _queue_end_pos(self, agent: Agent) -> Tuple[int, int]:
+        """Return the position from which the agent would start its next task.
+
+        If the agent has queued tasks, this is the target of the last task.
+        Otherwise it is the agent's current position.
+        """
+        end = self._agent_queue_end.get(agent.id)
+        return end if end is not None else agent.pos
+
+    def _append_to_queue(self, agent: Agent, task: Task, path: List[Tuple[int, int]],
+                         marginal_cost: float, effective_reward: float = None) -> None:
+        """Append a task to an agent's queue and update cached costs."""
+        self._ensure_agent(agent)
+        queue = self._agent_queues[agent.id]
+        queue.append(task)
+        # Store per-task costs for accurate subtraction later
+        task._queued_marginal_cost = marginal_cost
+        rew = effective_reward if effective_reward is not None else _TASK_REWARD.get(type(task), 1)
+        task._queued_effective_reward = rew
+        self._agent_queue_cost[agent.id] += marginal_cost
+        self._agent_queue_reward[agent.id] += rew
+        self._agent_queue_end[agent.id] = task.target_loc
+        task.assigned_to = agent.id
+
+    def advance_queue(self, agent: Agent) -> Optional[Task]:
+        """Pop the completed front task and assign the next one.
+
+        Returns the new current task (or None if the queue is empty).
+        """
+        self._ensure_agent(agent)
+        queue = self._agent_queues[agent.id]
+
+        # Remove completed tasks from the front, subtracting their costs
+        while queue and queue[0].completed:
+            done = queue.pop(0)
+            self._agent_queue_cost[agent.id] -= getattr(done, '_queued_marginal_cost', 0)
+            self._agent_queue_reward[agent.id] -= getattr(done, '_queued_effective_reward', 0)
+
+        if not queue:
+            self._agent_queue_cost[agent.id] = 0.0
+            self._agent_queue_reward[agent.id] = 0.0
+            self._agent_queue_end[agent.id] = None
+            return None
+
+        next_task = queue[0]
+        return next_task
+
+    def _clear_agent_queue(self, agent: Agent) -> None:
+        """Wipe the agent's entire queue."""
+        self._ensure_agent(agent)
+        for task in self._agent_queues[agent.id]:
+            if not task.completed:
+                task.assigned_to = None
+        self._agent_queues[agent.id] = []
+        self._agent_queue_cost[agent.id] = 0.0
+        self._agent_queue_reward[agent.id] = 0.0
+        self._agent_queue_end[agent.id] = None
+
+    def clear_agent_queue(self, agent: Agent) -> None:
+        """Public interface to clear an agent's task queue."""
+        self._clear_agent_queue(agent)
+
+    # ------------------------------------------------------------------
+    # Collateral exploration helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _path_footprint(
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+        rows: int,
+        cols: int,
+    ) -> Set[Tuple[int, int]]:
+        """Return all cells that would be observed by an agent walking *path*."""
+        revealed: Set[Tuple[int, int]] = set()
+        for r, c in path:
+            for dr in range(-obs_radius, obs_radius + 1):
+                for dc in range(-obs_radius, obs_radius + 1):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        revealed.add((nr, nc))
+        return revealed
+
+    def _collateral_bonus(
+        self,
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+    ) -> float:
+        """Count all new cells that would be revealed by *path* but are
+        NOT already in _predicted_revealed.  Each new cell adds +0.5."""
+        footprint = self._path_footprint(
+            path, obs_radius, self._map_rows, self._map_cols
+        )
+        new_cells = footprint - self._predicted_revealed
+        return len(new_cells) * 0.25
+
+    def _mark_path_revealed(
+        self,
+        path: List[Tuple[int, int]],
+        obs_radius: int,
+    ) -> None:
+        """Add the observation footprint of *path* to _predicted_revealed."""
+        self._predicted_revealed |= self._path_footprint(
+            path, obs_radius, self._map_rows, self._map_cols
+        )
+
+    # ------------------------------------------------------------------
     # Bidding and assignment
     # ------------------------------------------------------------------
-    def available_agents(self, agents: Iterable[Agent]) -> List[Agent]:
-        """
-        Agents may bid only when they are not committed to another incomplete
-        task. This is the availability constraint.
-        """
-        available: List[Agent] = []
-        for agent in agents:
-            if agent.current_task is None:
-                available.append(agent)
-                continue
-            if agent.current_task.completed:
-                available.append(agent)
-                continue
-        return available
-
     def compute_bid(
         self,
         agent: Agent,
@@ -200,17 +343,22 @@ class SequentialSingleItemAuctioneer:
         known_map: KnownMap,
     ) -> Optional[Bid]:
         """
-        Bid equals marginal motion cost to reach the task from the agent's
-        current state on the current known map.
+        Bid = marginal improvement in average utility when adding this task.
 
-        Drones use drone path planning so they can fly over obstacles.
-        Ground agents use normal path planning.
+        score = (R_queue + r) / (C_queue + c) - R_queue / C_queue
+
+        where r = task_reward + collateral_bonus, c = marginal_cost,
+        R_queue = sum of rewards already queued, C_queue = sum of costs queued.
+        If the queue is empty, the second term is 0.
         """
+        self._ensure_agent(agent)
+
         use_drone_path = isinstance(agent, DroneAgent)
+        start_pos = self._queue_end_pos(agent)
 
         path = plan_path(
             known_map,
-            agent.pos,
+            start_pos,
             task.target_loc,
             drone=use_drone_path,
         )
@@ -218,12 +366,10 @@ class SequentialSingleItemAuctioneer:
             return None
 
         path_len = max(1, len(path) - 1)
-        # Drones move twice per step, so effective travel time is halved
         if use_drone_path:
             path_len = path_len / 2
-        reward = _TASK_REWARD.get(type(task), 1)
 
-        # Dwell time: triage tasks require dwelling at the target
+        # Dwell time for this task
         if isinstance(task, TriageTask):
             if getattr(task, '_is_investigation', False):
                 dwell = 1
@@ -232,12 +378,22 @@ class SequentialSingleItemAuctioneer:
         else:
             dwell = 0
 
-        score = reward / (path_len + dwell)
+        marginal_cost = path_len + dwell
+
+        reward = _TASK_REWARD.get(type(task), 1)
+        collateral = self._collateral_bonus(path, agent.obs_radius)
+        r = reward + collateral
+
+        C_queue = self._agent_queue_cost[agent.id]
+
+        score = r / (C_queue + marginal_cost)
+
         return Bid(
             agent_id=agent.id,
             task_id=task.task_id,
             score=score,
             path=path,
+            effective_reward=r,
         )
 
     @staticmethod
@@ -264,31 +420,43 @@ class SequentialSingleItemAuctioneer:
 
     def auction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
-        Run a sequential single-item auction.
-
-        Tasks are offered in order of reward - manhattan_dist_to_closest_agent
-        so nearby high-reward tasks are assigned first.
+        Run a sequential single-item auction where ALL agents bid, even
+        those already holding tasks.  Won tasks are appended to the
+        winner's queue.  The first task in the queue is the active task.
         """
         pending = self.pending()
         if not pending:
             return
 
-        available_agents = list(self.available_agents(agents))
-        if not available_agents:
-            return
+        # Cache map dimensions and reset predicted revealed for this round
+        self._map_rows = known_map.rows
+        self._map_cols = known_map.cols
+        self._predicted_revealed = set()
+        # Seed with cells already known (not UNKNOWN)
+        for r in range(known_map.rows):
+            for c in range(known_map.cols):
+                if known_map.state[r][c] != ObservationState.UNKNOWN:
+                    self._predicted_revealed.add((r, c))
+        # Add footprints from existing agent queue paths
+        for agent in agents:
+            self._ensure_agent(agent)
+            for qtask in self._agent_queues[agent.id]:
+                if not qtask.completed and hasattr(qtask, '_queued_path'):
+                    self._mark_path_revealed(qtask._queued_path, agent.obs_radius)
+
+        # Ensure all agents are tracked
+        for agent in agents:
+            self._ensure_agent(agent)
 
         available_tasks = sorted(
             pending,
-            key=lambda t: self._auction_priority(t, available_agents),
+            key=lambda t: self._auction_priority(t, agents),
             reverse=True,
         )
 
         for task in available_tasks:
-            if not available_agents:
-                break
-
             bids: List[Bid] = []
-            for agent in available_agents:
+            for agent in agents:
                 # Filter ground_only tasks from non-ground agents
                 if (isinstance(task, TriageTask) and task.ground_only
                         and agent.agent_type != AgentType.GROUND):
@@ -301,17 +469,39 @@ class SequentialSingleItemAuctioneer:
                 continue
 
             winner = max(bids, key=lambda b: (b.score, -b.agent_id))
-            winning_agent = next(a for a in available_agents if a.id == winner.agent_id)
+            winning_agent = next(a for a in agents if a.id == winner.agent_id)
 
-            task.assigned_to = winning_agent.id
-            winning_agent.assign_task(task)
-            winning_agent.path = winner.path
-            winning_agent.status = AgentStatus.NAVIGATING
-            available_agents.remove(winning_agent)
+            # Compute marginal cost for queue tracking
+            use_drone = isinstance(winning_agent, DroneAgent)
+            path_len = max(1, len(winner.path) - 1)
+            if use_drone:
+                path_len = path_len / 2
+            if isinstance(task, TriageTask):
+                if getattr(task, '_is_investigation', False):
+                    dwell = 1
+                else:
+                    dwell = _TRIAGE_DWELL.get(winning_agent.agent_type, task.dwell_steps)
+            else:
+                dwell = 0
+            marginal_cost = path_len + dwell
+
+            effective_reward = winner.effective_reward
+            self._append_to_queue(winning_agent, task, winner.path, marginal_cost, effective_reward)
+
+            # Store path on task for footprint tracking and update predicted map
+            task._queued_path = winner.path
+            self._mark_path_revealed(winner.path, winning_agent.obs_radius)
+
+            # If this is the agent's first/only task, make it the active one
+            if winning_agent.current_task is None or winning_agent.current_task.completed:
+                winning_agent.assign_task(task)
+                winning_agent.path = winner.path
+                winning_agent.status = AgentStatus.NAVIGATING
 
             print(
                 f"  [AUCTION] Task {task.task_id} -> Agent {winning_agent.id} "
-                f"target={task.target_loc} bid_score={winner.score:.2f}"
+                f"target={task.target_loc} bid_score={winner.score:.2f} "
+                f"queue_len={len(self._agent_queues[winning_agent.id])}"
             )
 
         # CBS multi-agent replan for all navigating ground agents
@@ -407,18 +597,19 @@ class SequentialSingleItemAuctioneer:
 
     def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
-        Release all incomplete assignments and run a fresh auction round.
+        Release all incomplete assignments, clear all queues, and run a
+        fresh auction round.
         """
         self.reauction_count += 1
 
         for task in self._tasks:
             if not task.completed:
                 task.assigned_to = None
-                # Reset dwell progress so the new winner starts fresh
                 if isinstance(task, TriageTask):
                     task.progress = 0
 
         for agent in agents:
+            self._clear_agent_queue(agent)
             agent.current_task = None
             agent.path = []
             agent.status = AgentStatus.IDLE
@@ -496,7 +687,7 @@ class SequentialSingleItemAuctioneer:
         if swept and verbose:
             print(f"  [SWEPT]   {swept} task(s) observed as collateral")
 
-        # 4. Release agents whose current task is finished
+        # 4. Release agents whose current task is finished — advance queue
         for agent in agents:
             if agent.current_task and agent.current_task.completed:
                 if verbose:
@@ -509,17 +700,29 @@ class SequentialSingleItemAuctioneer:
                     else:
                         print(f"  [TASK DONE] Agent {agent.id} finished task"
                               f" {task.task_id}  (observed {task.target_loc})")
-                agent.current_task = None
-                agent.path = []
-                agent.status = AgentStatus.IDLE
 
-        # 4b. Release agents whose path became infeasible (no global reauction)
+                # Advance to next task in queue
+                next_task = self.advance_queue(agent)
+                if next_task is not None:
+                    agent.current_task = next_task
+                    agent.path = []
+                    agent.status = AgentStatus.REPLANNING
+                    if verbose:
+                        print(f"  [QUEUE] Agent {agent.id} advancing to next task "
+                              f"{next_task.task_id} target={next_task.target_loc} "
+                              f"remaining_queue={len(self._agent_queues[agent.id])}")
+                else:
+                    agent.current_task = None
+                    agent.path = []
+                    agent.status = AgentStatus.IDLE
+
+        # 4b. Release agents whose path became infeasible — clear their queue
         for agent in agents:
             if self._path_infeasible(agent, known_map):
                 if verbose:
                     print(f"  [INFEASIBLE] Agent {agent.id} path to "
-                          f"{agent.current_task.target_loc} blocked; releasing task")
-                agent.current_task.assigned_to = None
+                          f"{agent.current_task.target_loc} blocked; clearing queue")
+                self._clear_agent_queue(agent)
                 agent.current_task = None
                 agent.path = []
                 agent.status = AgentStatus.IDLE
