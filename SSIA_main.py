@@ -69,22 +69,32 @@ def _do_microstep(agents, ground_truth, known_map, auctioneer, verbose: bool) ->
     Returns True if any agent moved.
     """
     moved_any = False
+    blocked_agents = []
 
     for agent in agents:
         ev = agent.step(known_map)
         if ev is None:
             continue
 
-        moved_any = True
+        if ev.kind == EventType.STEP_COMPLETE:
+            moved_any = True
+            continue
 
-        if ev.kind == EventType.PATH_BLOCKED and verbose:
-            blocked_at = ev.data["blocked_at"]
+        if ev.kind == EventType.PATH_BLOCKED:
+            blocked_agents.append((agent, ev.data["blocked_at"]))
+
+    for agent, blocked_at in blocked_agents:
+        if verbose:
             print(f"  [BLOCKED] Agent {agent.id} — cell {blocked_at} is obstacle")
-            if agent.current_task:
-                agent.current_task.assigned_to = None
-                agent.current_task = None
-            agent.path = []
-            agent.status = AgentStatus.IDLE
+        reauctioned = auctioneer.handle_invalidated_assignment(
+            agent,
+            agents,
+            known_map,
+            verbose=verbose,
+            reason="path-blocked",
+        )
+        if reauctioned:
+            break
 
     if not moved_any:
         return False

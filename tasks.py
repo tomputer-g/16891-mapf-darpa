@@ -8,6 +8,7 @@ Tasks and task queue for the DARPA exploration simulation.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 from sim_types import AgentType, ObservationState
@@ -20,6 +21,22 @@ if TYPE_CHECKING:
 # ===========================================================================
 # Tasks
 # ===========================================================================
+
+
+@dataclass
+class AssignmentSnapshot:
+    """Frozen winner vs runner-up comparison used for repair decisions."""
+
+    winner_agent_id: int
+    winner_metric: float
+    winner_execution_cost: float
+    winner_effective_reward: float
+    runner_up_agent_id: Optional[int] = None
+    runner_up_metric: float = field(default_factory=lambda: float("-inf"))
+    runner_up_execution_cost: float = 0.0
+    runner_up_effective_reward: float = 0.0
+    mode: str = "assignment"
+
 
 class Task(ABC):
     """
@@ -44,6 +61,7 @@ class Task(ABC):
         self.priority:     float         = priority
         self.completed:    bool          = False
         self.assigned_to:  Optional[int] = None   # agent id
+        self.assignment_snapshot: Optional[AssignmentSnapshot] = None
 
     @property
     @abstractmethod

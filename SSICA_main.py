@@ -56,27 +56,17 @@ def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbo
     auctioneer.update(agents, known_map, ground_truth=ground_truth,
                       verbose=verbose)
 
-    # 3. Replan if needed — skip unreachable tasks from queue
+    # 3. Replan if needed.
     for agent in agents:
         if agent.status == AgentStatus.REPLANNING:
             if not agent.replan(known_map):
-                # Current task unreachable — skip it, try next in queue
-                if agent.current_task:
-                    agent.current_task.completed = True  # mark so it's swept
-                next_task = auctioneer.advance_queue(agent)
-                if next_task is not None:
-                    agent.current_task = next_task
-                    agent.path = []
-                    agent.status = AgentStatus.REPLANNING
-                    if verbose:
-                        print(f"  [SKIP] Agent {agent.id} skipping unreachable task, "
-                              f"advancing to {next_task.task_id}")
-                else:
-                    agent.current_task = None
-                    agent.path = []
-                    agent.status = AgentStatus.IDLE
-                    if verbose:
-                        print(f"  [WARN] Agent {agent.id} queue empty after skip")
+                auctioneer.handle_invalidated_assignment(
+                    agent,
+                    agents,
+                    known_map,
+                    verbose=verbose,
+                    reason="replanning",
+                )
 
 
 def _do_microstep(agents, ground_truth, known_map, auctioneer, verbose: bool) -> bool:
@@ -85,21 +75,32 @@ def _do_microstep(agents, ground_truth, known_map, auctioneer, verbose: bool) ->
     Returns True if any agent moved.
     """
     moved_any = False
+    blocked_agents = []
 
     for agent in agents:
         ev = agent.step(known_map)
         if ev is None:
             continue
 
-        moved_any = True
+        if ev.kind == EventType.STEP_COMPLETE:
+            moved_any = True
+            continue
 
-        if ev.kind == EventType.PATH_BLOCKED and verbose:
-            blocked_at = ev.data["blocked_at"]
+        if ev.kind == EventType.PATH_BLOCKED:
+            blocked_agents.append((agent, ev.data["blocked_at"]))
+
+    for agent, blocked_at in blocked_agents:
+        if verbose:
             print(f"  [BLOCKED] Agent {agent.id} — cell {blocked_at} is obstacle")
-            auctioneer.clear_agent_queue(agent)
-            agent.current_task = None
-            agent.path = []
-            agent.status = AgentStatus.IDLE
+        reauctioned = auctioneer.handle_invalidated_assignment(
+            agent,
+            agents,
+            known_map,
+            verbose=verbose,
+            reason="path-blocked",
+        )
+        if reauctioned:
+            break
 
     if not moved_any:
         return False
@@ -174,39 +175,17 @@ def run_simulation(
         auctioneer.update(agents, known_map, ground_truth=ground_truth,
                           verbose=verbose)
 
-        # Handle agents stuck in REPLANNING.
-        #
-        # REPLANNING means the auction already chose a task for this agent, but
-        # the agent still needs a path from its current position to that task.
-        # If replan() fails, the current known map offers no feasible path.
-        #
-        # In SSICA we then skip that queued task and try the next queued task:
-        # - mark the current task completed so advance_queue() removes it
-        # - ask the queue for the next task already assigned to this agent
-        # - if one exists, keep the agent in REPLANNING and try again later
-        # - otherwise, clear the agent back to IDLE
-        #
-        # So your interpretation is mostly right, with one nuance:
-        # "completed" here means "discard this unreachable queued task so the
-        # queue can move on", not "the robot physically executed the task."
+        # Handle agents stuck in REPLANNING after the triage/update phase.
         for agent in agents:
             if agent.status == AgentStatus.REPLANNING:
-                # Yes in spirit: replan() returns False when no path was found
-                # (or when there is no current task). It does not literally
-                # check for None; it asks the planner for paths and returns
-                # False when planning fails. See agents.Agent.replan().
                 if not agent.replan(known_map):
-                    if agent.current_task:
-                        agent.current_task.completed = True
-                    next_task = auctioneer.advance_queue(agent)
-                    if next_task is not None:
-                        agent.current_task = next_task
-                        agent.path = []
-                        agent.status = AgentStatus.REPLANNING
-                    else:
-                        agent.current_task = None
-                        agent.path = []
-                        agent.status = AgentStatus.IDLE
+                    auctioneer.handle_invalidated_assignment(
+                        agent,
+                        agents,
+                        known_map,
+                        verbose=verbose,
+                        reason="replanning",
+                    )
 
         if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
             if vis is not None:

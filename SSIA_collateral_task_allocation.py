@@ -28,7 +28,7 @@ from agents import Agent, AgentStatus, DroneAgent, plan_path
 from maps import KnownMap, ObservationState
 from planner import CBS
 from sim_types import AgentType
-from tasks import ExplorationTask, TriageTask, Task
+from tasks import AssignmentSnapshot, ExplorationTask, TriageTask, Task
 
 
 # Reward values used in the bid formula: reward / (path_length + dwell_time)
@@ -39,6 +39,7 @@ _TASK_REWARD = {
 
 # Dwell steps by agent type (must stay in sync with SSIA_collateral_main._TRIAGE_DWELL)
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
+_REPAIR_METRIC_SLACK = 0.01
 
 
 @dataclass
@@ -48,6 +49,8 @@ class Bid:
     task_id: int
     score: float
     path: List[Tuple[int, int]]
+    execution_cost: float
+    effective_reward: float
 
 
 class SequentialSingleItemAuctioneer:
@@ -285,7 +288,133 @@ class SequentialSingleItemAuctioneer:
             task_id=task.task_id,
             score=score,
             path=path,
+            execution_cost=path_len + dwell,
+            effective_reward=reward + collateral,
         )
+
+    @staticmethod
+    def _sorted_bids(bids: List[Bid]) -> List[Bid]:
+        return sorted(bids, key=lambda b: (b.score, -b.agent_id), reverse=True)
+
+    def _store_assignment_snapshot(self, task: Task, bids: List[Bid]) -> None:
+        ordered = self._sorted_bids(bids)
+        winner = ordered[0]
+        runner_up = ordered[1] if len(ordered) > 1 else None
+        task.assignment_snapshot = AssignmentSnapshot(
+            winner_agent_id=winner.agent_id,
+            winner_metric=winner.score,
+            winner_execution_cost=winner.execution_cost,
+            winner_effective_reward=winner.effective_reward,
+            runner_up_agent_id=None if runner_up is None else runner_up.agent_id,
+            runner_up_metric=float("-inf") if runner_up is None else runner_up.score,
+            runner_up_execution_cost=0.0 if runner_up is None else runner_up.execution_cost,
+            runner_up_effective_reward=0.0 if runner_up is None else runner_up.effective_reward,
+            mode="assignment",
+        )
+
+    def _repair_bid(
+        self,
+        agent: Agent,
+        task: Task,
+        known_map: KnownMap,
+        effective_reward: float,
+    ) -> Optional[Bid]:
+        use_drone_path = isinstance(agent, DroneAgent)
+        path = plan_path(
+            known_map,
+            agent.pos,
+            task.target_loc,
+            drone=use_drone_path,
+        )
+        if not path:
+            return None
+
+        path_len = max(1, len(path) - 1)
+        if use_drone_path:
+            path_len = path_len / 2
+
+        if isinstance(task, TriageTask):
+            if getattr(task, '_is_investigation', False):
+                dwell = 1
+            else:
+                dwell = _TRIAGE_DWELL.get(agent.agent_type, task.dwell_steps)
+        else:
+            dwell = 0
+
+        execution_cost = path_len + dwell
+        return Bid(
+            agent_id=agent.id,
+            task_id=task.task_id,
+            score=effective_reward / execution_cost,
+            path=path,
+            execution_cost=execution_cost,
+            effective_reward=effective_reward,
+        )
+
+    def handle_invalidated_assignment(
+        self,
+        agent: Agent,
+        agents: List[Agent],
+        known_map: KnownMap,
+        verbose: bool = False,
+        reason: str = "blocked",
+    ) -> bool:
+        """Repair a broken assignment locally or trigger a full reauction."""
+        task = agent.current_task
+        if task is None or task.completed:
+            return False
+
+        snapshot = task.assignment_snapshot
+        if snapshot is None:
+            if verbose:
+                print(f"  [REPAIR] Task {task.task_id} has no snapshot; reauctioning")
+            self.trigger_global_reauction(agents, known_map)
+            return True
+
+        repair = self._repair_bid(
+            agent,
+            task,
+            known_map,
+            effective_reward=snapshot.winner_effective_reward,
+        )
+        if repair is None:
+            if verbose:
+                print(f"  [REPAIR] Agent {agent.id} cannot repair task {task.task_id}; reauctioning")
+            self.trigger_global_reauction(agents, known_map)
+            return True
+
+        if (
+            snapshot.runner_up_agent_id is not None
+            and snapshot.runner_up_metric > repair.score + _REPAIR_METRIC_SLACK
+        ):
+            if verbose:
+                print(
+                    f"  [REPAIR] Agent {agent.id} repaired task {task.task_id} "
+                    f"score={repair.score:.3f} runner_up={snapshot.runner_up_metric:.3f}; reauctioning"
+                )
+            self.trigger_global_reauction(agents, known_map)
+            return True
+
+        task.assigned_to = agent.id
+        agent.current_task = task
+        agent.path = repair.path
+        agent.status = AgentStatus.NAVIGATING
+
+        if not isinstance(agent, DroneAgent) and not self._cbs_replan_ground(agents, known_map):
+            if verbose:
+                print(f"  [REPAIR] Agent {agent.id} kept task {task.task_id} but CBS failed; reauctioning")
+            self.trigger_global_reauction(agents, known_map)
+            return True
+
+        snapshot.winner_agent_id = agent.id
+        snapshot.winner_metric = repair.score
+        snapshot.winner_execution_cost = repair.execution_cost
+        if verbose:
+            print(
+                f"  [REPAIR] Agent {agent.id} kept task {task.task_id} after {reason}; "
+                f"score={repair.score:.3f}"
+            )
+        return False
 
     @staticmethod
     def _auction_priority(task: Task, agents: List[Agent]) -> float:
@@ -366,6 +495,7 @@ class SequentialSingleItemAuctioneer:
             winning_agent = next(a for a in available_agents if a.id == winner.agent_id)
 
             task.assigned_to = winning_agent.id
+            self._store_assignment_snapshot(task, bids)
             winning_agent.assign_task(task)
             winning_agent.path = winner.path
             winning_agent.status = AgentStatus.NAVIGATING
@@ -479,6 +609,7 @@ class SequentialSingleItemAuctioneer:
         for task in self._tasks:
             if not task.completed:
                 task.assigned_to = None
+                task.assignment_snapshot = None
                 # Reset dwell progress so the new winner starts fresh
                 if isinstance(task, TriageTask):
                     task.progress = 0
@@ -574,20 +705,23 @@ class SequentialSingleItemAuctioneer:
                     else:
                         print(f"  [TASK DONE] Agent {agent.id} finished task"
                               f" {task.task_id}  (observed {task.target_loc})")
+                agent.current_task.assignment_snapshot = None
                 agent.current_task = None
                 agent.path = []
                 agent.status = AgentStatus.IDLE
 
-        # 4b. Release agents whose path became infeasible (no global reauction)
+        # 4b. Repair infeasible paths locally before escalating to reauction.
         for agent in agents:
             if self._path_infeasible(agent, known_map):
-                if verbose:
-                    print(f"  [INFEASIBLE] Agent {agent.id} path to "
-                          f"{agent.current_task.target_loc} blocked; releasing task")
-                agent.current_task.assigned_to = None
-                agent.current_task = None
-                agent.path = []
-                agent.status = AgentStatus.IDLE
+                reauctioned = self.handle_invalidated_assignment(
+                    agent,
+                    agents,
+                    known_map,
+                    verbose=verbose,
+                    reason="repair-screen",
+                )
+                if reauctioned:
+                    return
 
         # 5. Reauction on conflict, otherwise normal auction
         if self.should_trigger_reauction(agents, known_map):
