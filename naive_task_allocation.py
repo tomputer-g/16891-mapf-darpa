@@ -202,7 +202,7 @@ class NaiveTaskAuctioneer:
             if not eligible:
                 continue
 
-            def score(a: "Agent", t: Task = task) -> Tuple[float, float]:
+            def score(a: "t", t: Task = task) -> Tuple[float, float]:
                 r0, c0 = a.pos
                 r1, c1 = t.target_loc
                 return (t.priority, -(abs(r1 - r0) + abs(c1 - c0)))

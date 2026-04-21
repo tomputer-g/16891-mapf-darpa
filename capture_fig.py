@@ -11,8 +11,8 @@ from agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
 from maps import KnownMap, load_new_scenario
 from sim_types import AgentType
 from planner import CBS
-from SSIA_task_allocation import SequentialSingleItemAuctioneer
-from SSIA_main import _update_triage_progress, _post_observation_updates, _do_microstep
+from SSIA.task_allocation import SequentialSingleItemAuctioneer
+from SSIA.main import _update_triage_progress, _post_observation_updates, _do_microstep
 from visualizer import SimulationVisualizer
 
 CAPTURE_STEP = 10  # capture at this step (mid-exploration)

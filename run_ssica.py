@@ -2,7 +2,7 @@ import sys, re, io
 
 maps = ['generated/darpa%d.txt' % i for i in range(1, 8)]
 
-from SSICA_main import run_simulation as sim
+from SSICA.main import run_simulation as sim
 
 results = []
 for m in maps:
