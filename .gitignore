@@ -3,3 +3,5 @@ env/*
 .vscode
 .claude
 CLAUDE.md
+.codex
+.idea

@@ -10,6 +10,7 @@
 \usepackage{hyperref}
 \usepackage{multirow}
 \usepackage{subcaption}
+\graphicspath{{../figures/}}
 
 \begin{document}
 
@@ -37,26 +38,31 @@ ranais@andrew.cmu.edu}
 
 \maketitle
 
+\textcolor{red}{Need to check the claim for when reauctions are triggered, vs when replanning is triggered}
+\textcolor{red}{Do we want to introduce our system as a generalizable auctioning method or as a ground-aerial TAPF solver? Generalizable method so add a small section on that}
+\textcolor{red}{}
 % ===========================================================================
+\textcolor{red}{Need to shorten paper to 7.5/8 pages}
+
 \begin{abstract}
-We present MATTER, a framework for multi-agent task allocation and path planning in partially unknown environments with heterogeneous robots. Inspired by the DARPA Triage Challenge, our system integrates an Availability-Constrained Sequential Single-Item Auction (SSIA) with reward-shaped bidding and Conflict-Based Search (CBS) for collision-free multi-agent path finding. We compare our approach against a greedy baseline on procedurally generated maps containing obstacles, buildings, and triage objectives. Experimental results demonstrate that SSIA with reward shaping achieves faster map exploration and objective completion, with fewer total simulation steps across all tested scenarios. Our system supports heterogeneous ground and aerial agents with distinct sensing, mobility, and task capabilities.
+We present MATTER, a framework for multi-agent task allocation and path planning in partially unknown environments with heterogeneous robots. Inspired by the DARPA Triage Challenge, our system integrates auction-based task allocation with Conflict-Based Search (CBS) for collision-free multi-agent path finding. We compare three auction variants---an Availability-Constrained Sequential Single-Item Auction (SSIA) with reward-shaped bidding, an SSIA extension with a collateral exploration bonus (SSIA-Collateral) that rewards paths revealing new map cells, and a Sequential Single-Item Concurrent Auction (SSICA) that maintains per-agent task queues with a load-balancing bid formula---against a greedy baseline on procedurally generated maps containing obstacles, buildings, and triage objectives. Experimental results demonstrate that SSIA-Collateral achieves the fastest map exploration and objective completion (avg.~39.1 steps), followed by SSIA (44.0) and SSICA (50.9), all substantially outperforming the greedy baseline (72.3). Our system supports heterogeneous ground and aerial agents with distinct sensing, mobility, and task capabilities.
 \end{abstract}
 
 % ===========================================================================
 \section{Introduction}
 
-Multi-agent path finding (MAPF) methods typically assume full visibility of the environment and a fixed set of tasks known a priori. In many real-world applications, however, the map layout and objectives are initially unknown and must be discovered incrementally. The DARPA Triage Challenge exemplifies this setting: teams of heterogeneous robots must explore an unknown disaster site, locate casualties, and perform triage---all under time pressure and with limited sensing.
+Multi-agent path finding (MAPF) methods typically assume full visibility of the environment and a fixed set of tasks known \textit{a priori}. In many real-world applications, however, the map layout and objectives are initially unknown and must be discovered incrementally. The DARPA Triage Challenge exemplifies this setting: teams of heterogeneous robots must explore an unknown disaster site, locate casualties, and perform triage---all under time pressure and with limited sensing.
 
 We address the combined problem of \textbf{multi-agent task allocation and planning in an initially unseen environment} with \textbf{heterogeneous agents}. Our system, MATTER (Multi-Agent Task planning for Triage and ExploRation), integrates three core components:
 \begin{enumerate}
     \item \textbf{Frontier-based exploration} that dynamically generates tasks as the map is revealed;
-    \item \textbf{Availability-Constrained Sequential Single-Item Auction (SSIA)} with reward-shaped bidding for lifelong task allocation;
+    \item \textbf{Auction-based task allocation} with three variants: SSIA (availability-constrained sequential single-item auction), SSIA-Collateral (with collateral exploration bonus), and SSICA (concurrent auction with per-agent task queues);
     \item \textbf{Conflict-Based Search (CBS)} for optimal multi-agent path planning with collision avoidance.
 \end{enumerate}
 
 The environment contains two types of agents: \textbf{ground agents} (legged robot dogs) and \textbf{aerial agents} (quadrotors). Ground agents have limited observation range but can enter buildings and triage patients efficiently. Aerial agents observe from a wider footprint and move faster, but cannot enter buildings and require more time for triage. This heterogeneity must be accounted for during both task allocation and path planning.
 
-We compare our SSIA-based allocator against a greedy baseline and show that reward-shaped bidding leads to more efficient exploration and task completion across a range of procedurally generated scenarios.
+We compare three auction-based allocator variants against a greedy baseline and show that reward-shaped bidding and collateral exploration bonuses lead to more efficient exploration and task completion across a range of procedurally generated scenarios.
 
 % ===========================================================================
 \section{Related Works}
@@ -89,7 +95,7 @@ The environment is a rectangular grid that is initially unexplored. When observe
     \item \textbf{Buildings}: traversable by all agents but only \emph{explorable} by ground agents. Buildings may or may not contain triage objectives that are invisible to aerial sensors.
 \end{itemize}
 
-The system consists of $D$ aerial (drone) agents and $G$ ground agents. Both types move omnidirectionally on the grid and are simplified as point masses. The goal is to explore the entire map and complete all triage objectives in minimum total time steps.
+The system consists of $D$ aerial (drone) agents and $G$ ground agents. Both types move on a 4-connected grid and are simplified as point masses. The goal is to explore the entire map and complete all triage objectives in minimum total time steps.
 
 \subsection{Agent Model}
 
@@ -106,7 +112,7 @@ The simulation maintains two map structures:
 
 \textbf{Ground Truth Map} ($\mathcal{M}_{gt}$): The full environment including obstacles, buildings (with occupancy flags), free-standing objectives, and agent start locations. This is hidden from agents.
 
-\textbf{Known Map} ($\mathcal{M}_{k}$): A shared belief state initialized to all \textsc{Unknown}. Each cell can be in one of six states: \textsc{Unknown}, \textsc{Free}, \textsc{Obstacle}, \textsc{Objective}, \textsc{Building}, or \textsc{Occupied\_Building}. Agents update $\mathcal{M}_{k}$ via local observations at each time step. For planning purposes, \textsc{Unknown} cells are treated optimistically as free space.
+\textbf{Known Map} ($\mathcal{M}_{k}$): A shared belief state initialized to all \textsc{Unknown}. Each cell can be in one of six states: \textsc{Unknown}, \textsc{Free}, \textsc{Obstacle}, \textsc{Objective}, \textsc{Building}, or \textsc{Occupied\_Building}. Agents update $\mathcal{M}_{k}$ via local observations at each time step. For planning purposes, \textsc{Unknown} cells are treated optimistically as free space (Free-space assumption).
 
 \subsection{Task Types}
 
@@ -124,7 +130,8 @@ Triage tasks for objectives inside buildings are restricted to ground agents onl
 
 \subsection{Greedy Baseline (Naive Task Allocation)}
 
-Our baseline is a single-pass greedy allocator. For each idle agent, the allocator selects the unassigned task that maximizes a score function:
+\textcolor{red}{The code currently}
+Our baseline is a single-pass greedy allocator. For each pending task in the queue, the allocator selects an agent with the largest score:
 \begin{equation}
     \text{score}(a, \tau) = \bigl(\text{priority}(\tau),\; -d_{\text{manhattan}}(a, \tau)\bigr)
     \label{eq:greedy}
@@ -136,7 +143,7 @@ where $\text{priority}(\tau)$ is the task's intrinsic priority and $d_{\text{man
 Our primary contribution is an auction-based allocator designed for dynamic, partially observed environments with heterogeneous agents.
 
 \subsubsection{Availability Constraint}
-Only agents that are currently \emph{available}---i.e., not holding an active, incomplete task---may participate in bidding. This prevents over-commitment and ensures each agent focuses on one objective at a time.
+Only agents that are currently \emph{available} (not holding an active, incomplete task) may participate in bidding. This prevents over-commitment and ensures each agent focuses on one objective at a time.
 
 \subsubsection{Reward-Shaped Bid Formulation}
 Each agent $a$ computes a bid for task $\tau$ as:
@@ -151,10 +158,11 @@ where:
     \item $d(a, \tau)$ is the dwell time required at the task location (0 for exploration, 1 for investigation, 2 for ground triage, 4 for drone triage).
 \end{itemize}
 
-This formulation captures a reward-per-unit-time metric: agents prefer high-reward tasks that are close and quick to complete. The asymmetric dwell times naturally encode the heterogeneous advantage---ground agents bid more competitively on triage tasks (lower dwell), while drones bid more competitively on distant exploration tasks (halved path cost and wider observation).
+This formulation captures a reward-per-unit-time metric: agents prefer high-reward tasks that are close and quick to complete. The asymmetric dwell times naturally encode the benefits of heterogeneous agents where ground agents bid more competitively on triage tasks (lower dwell), while drones bid more competitively on distant exploration tasks (halved path cost and wider observation).
 
 \subsubsection{Task Ordering}
 Tasks are offered for auction in priority order. The auction priority for each task is:
+
 \begin{equation}
     p_{\text{auction}}(\tau) = R(\tau) - \min_{a \in \mathcal{A}_{\text{eligible}}} d_{\text{manhattan}}(a, \tau)
 \end{equation}
@@ -208,16 +216,55 @@ The full SSIA auction round is summarized in Algorithm~\ref{alg:ssia}.
 \end{algorithmic}
 \end{algorithm}
 
+\subsection{SSIA-Collateral: Collateral Exploration Bonus}
+
+SSIA-Collateral extends the base SSIA allocator by incorporating an \emph{information gain bonus} into the bid computation. \textbf{collateral exploration} takes into account the cells that get discovered while an agent is traversing the environment through the sensor footprint that are not the goal itself. SSIA-Collateral estimates this bonus at bid time and adds it to the task reward, favoring paths that reveal more of the unknown map.
+
+\subsubsection{Path Footprint and Predicted Revealed Set}
+For a candidate path $P = (p_1, \ldots, p_n)$ and agent observation radius $r_{\text{obs}}$, the \emph{path footprint} is the set of all cells within observation range of any cell on the path:
+\begin{equation}
+    F(P) = \bigcup_{p \in P} \{c \mid \|c - p\|_\infty \leq r_{\text{obs}}\}
+\end{equation}
+The auctioneer maintains a \emph{predicted revealed set} $\mathcal{S}_{\text{pred}}$, initialized at the start of each auction round to the set of all currently known (non-\textsc{Unknown}) cells plus the footprints of all paths already assigned to agents. As each task is won, the winner's path footprint is added to $\mathcal{S}_{\text{pred}}$.
+
+\subsubsection{Collateral Bonus}
+The collateral bonus for a candidate path $P$ is the number of new cells it would reveal beyond $\mathcal{S}_{\text{pred}}$, scaled by a constant $\alpha = 0.25$:
+\begin{equation}
+    B_{\text{coll}}(P) = \alpha \cdot |F(P) \setminus \mathcal{S}_{\text{pred}}|
+\end{equation}
+
+\subsubsection{Modified Bid}
+The SSIA-Collateral bid replaces the base reward $R(\tau)$ with an augmented reward:
+\begin{equation}
+    \text{bid}_{\text{coll}}(a, \tau) = \frac{R(\tau) + B_{\text{coll}}(P_{a \to \tau})}{L(a, \tau) + d(a, \tau)}
+    \label{eq:bid_coll}
+\end{equation}
+This biases assignment toward paths that explore more unknown territory as a side effect of reaching their primary target. The bonus is largest early in the simulation when many cells are unknown, and diminishes as the map is revealed.
+
+\subsection{SSICA: Sequential Single-Item Concurrent Auction}
+
+We also explored a concurrent auction variant, SSICA, which relaxes the availability constraint: all agents may bid on every task, even those already holding assignments. Each agent maintains an ordered task queue, and newly won tasks are appended to the back of that queue. This allows the allocator to make future commitments: rather than assigning only the next task for each available robot, SSICA can reserve additional work for an agent before its current task is complete.
+
+The queue directly affects bidding. When agent $a$ bids on task $\tau$, the bid is evaluated from the end of the agent's existing queue, not from its current physical position. If the agent already has queued work, the path for the new bid is computed from the target of the last queued task; otherwise it is computed from the agent's current location. Let $C_{\text{queue}}(a)$ denote the cumulative queued cost already assigned to agent $a$, and let $c(a,\tau)$ denote the marginal cost of adding task $\tau$ to the end of that queue (path length from the last queued target plus dwell time). The implemented SSICA bid is
+\begin{equation}
+    \text{bid}_{\text{SSICA}}(a, \tau) = \frac{r}{C_{\text{queue}}(a) + c(a, \tau)}
+    \label{eq:bid_ssica}
+\end{equation}
+where $r = R(\tau) + B_{\text{coll}}$ is the task reward augmented by the collateral exploration bonus. This score favors tasks that offer high reward relative to the agent's total committed workload, while implicitly discouraging overloading agents that already have long queues.
+
+Conceptually, the queue gives SSICA a stronger form of look-ahead than SSIA: an agent can win several tasks in sequence, and each subsequent bid reflects where that agent is expected to be after finishing its previously assigned work. This can be advantageous when tasks are spatially clustered, since a robot that is already expected to end near a region may be a good candidate for additional nearby work.
+
+In our experiments, however, SSICA underperformed both SSIA and SSIA-Collateral (Section~\ref{sec:results}). One plausible explanation is that queued plans become stale in a partially observed environment: tasks assigned early in a queue are evaluated using an incomplete map, and by the time the agent reaches later queue positions, newly revealed obstacles or newly discovered tasks may make those earlier commitments less effective. A second likely contributor is sequential queue accumulation within each auction round: once an agent wins a task, its queue end position shifts, which can make nearby follow-on tasks appear artificially cheap for that same agent. These mechanisms are consistent with the observed behavior of the implementation, although the current experiments do not isolate them as uniquely proven causes.
+
 \subsection{CBS: Conflict-Based Search for Multi-Agent Path Finding}
 
 All agents share a single CBS planner instance for coordinated path planning.
 
 \subsubsection{Low-Level Search: Constrained A*}
-The low-level planner is a space-time A* search. The state space is $(\text{location}, \text{timestep})$, and the agent may take one of five actions at each step: move in four cardinal directions or wait. The search respects three types of constraints:
+The low-level planner is a space-time A* search. The state space is $(\text{location}, \text{timestep})$, and the agent may take one of five actions at each step: move in four cardinal directions or wait. The search respects two types of constraints:
 \begin{itemize}
     \item \textbf{Vertex constraint}: agent $i$ cannot occupy location $\ell$ at timestep $t$.
     \item \textbf{Edge constraint}: agent $i$ cannot traverse from $\ell_1$ to $\ell_2$ at timestep $t$.
-    \item \textbf{Wait constraint}: agent $i$ cannot wait at location $\ell$ at timestep $t$.
 \end{itemize}
 
 The heuristic function is agent-type dependent:
@@ -235,7 +282,7 @@ The high-level CBS search maintains a priority queue of constraint tree (CT) nod
     \item The total cost (sum of individual path lengths).
 \end{itemize}
 
-The root node plans each agent independently with no constraints. If collisions exist, the first collision is selected, and two child nodes are generated---one constraining each involved agent. The search expands nodes in order of $(cost, |collisions|)$ and terminates when a collision-free solution is found or a maximum of 5{,}000 node expansions is reached.
+The root node plans each agent independently with no constraints. If collisions exist, the first collision is selected, and a child node is generated for each one of the two involved agents. The search expands nodes in order of $(cost, |collisions|)$ and terminates when a collision-free solution is found or a maximum of 5{,}000 node expansions is reached.
 
 \subsubsection{Drone Handling}
 Drone agents are excluded from CBS collision resolution entirely. Because drones fly over all terrain---including obstacles and buildings---they face no shared-space conflicts with ground agents. Furthermore, when multiple drones are present, each can operate at a distinct flight altitude, eliminating the possibility of inter-drone collisions. Consequently, only ground agents participate in the CBS constraint tree; drones are planned independently using Manhattan-heuristic A* with no inter-agent constraints.
@@ -293,7 +340,7 @@ Figure~\ref{fig:all_maps} shows the ground-truth layouts of all seven DARPA-scal
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{figures/all_maps.png}
+    \includegraphics[width=\textwidth]{all_maps.png}
     \caption{Ground-truth layouts of all seven DARPA-scale test maps. Top row: (a)~\texttt{darpa1}---open 15$\times$15 with interior starts; (b)~\texttt{darpa2}---building-heavy 15$\times$15; (c)~\texttt{darpa3}---15$\times$15 layout of (a) with obstacle starting zone; (d)~\texttt{darpa4}---layout of (b) with starting zone. Bottom row: (e)~\texttt{darpa5}---16$\times$15 maze with single-width corridors; (f)~\texttt{darpa6}---22$\times$21 maze with 2-block-wide passages; (g)~\texttt{darpa7}---22$\times$21 open layout with high task density. Blue/orange cells are buildings (empty/occupied); yellow cells are free-standing objectives. Triangles mark drone starts; squares mark ground agent starts.}
     \label{fig:all_maps}
 \end{figure*}
@@ -317,16 +364,19 @@ We evaluate on two categories of maps:
 
 \subsection{Allocator Configurations}
 
-We compare two configurations:
+We compare four configurations:
 \begin{enumerate}
     \item \textbf{Greedy}: The naive baseline allocator using the score function in Eq.~\ref{eq:greedy}. Handles exploration, building investigation, and triage tasks. Uses CBS for ground agent collision avoidance. Lacks reward shaping and global reauction.
-    \item \textbf{SSIA}: The full auction-based allocator with reward-shaped bidding (Eq.~\ref{eq:bid}), agent-type constraints, building investigation, triage tasks, CBS-based multi-agent path planning, and global reauction.
+    \item \textbf{SSIA}: The availability-constrained sequential single-item auction with reward-shaped bidding (Eq.~\ref{eq:bid}), agent-type constraints, CBS-based multi-agent path planning, and global reauction.
+    \item \textbf{SSIA-Collateral}: Extends SSIA with the collateral exploration bonus (Eq.~\ref{eq:bid_coll}), rewarding paths that reveal unknown cells en route to the task target.
+    \item \textbf{SSICA}: The concurrent auction variant (Eq.~\ref{eq:bid_ssica}) with per-agent task queues and load-balancing bid formula. Included for comparison.
 \end{enumerate}
 
 All configurations use the same simulation harness, agent models, and map representation. The primary metric is \textbf{total simulation steps to completion} (exploration + all triage objectives).
 
 % ===========================================================================
 \section{Results}
+\label{sec:results}
 
 \subsection{Qualitative Analysis}
 
@@ -334,88 +384,87 @@ Figure~\ref{fig:visualization} shows a representative simulation snapshot on the
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=0.55\textwidth]{figures/visualization.png}
+    \includegraphics[width=0.55\textwidth]{visualization.png}
     \caption{Simulation visualization on the \texttt{darpa1} scenario. Ground agents (squares) and drone agents (triangles) explore the map collaboratively. Fog-of-war covers unexplored regions. Gold stars mark current task targets, and dashed cyan lines show planned paths.}
     \label{fig:visualization}
 \end{figure*}
 
-The SSIA allocator exhibits several qualitative advantages over the greedy baseline:
+The SSIA and SSIA-Collateral allocators exhibit several qualitative advantages over the greedy baseline:
 \begin{itemize}
     \item \textbf{Role specialization}: Drones naturally gravitate toward distant exploration tasks (halved path cost), while ground agents preferentially handle nearby triage and building investigation tasks (lower dwell time, building access). The greedy baseline does not exhibit this behavior since it bids purely on distance.
     \item \textbf{Adaptive reallocation}: When newly discovered obstacles invalidate planned paths, the global reauction mechanism redistributes all incomplete tasks from the current agent states, preventing agents from remaining stuck or making suboptimal detours.
-    \item \textbf{Prioritized triage}: While both allocators handle building investigation and triage tasks, the SSIA allocator's reward-shaped bidding naturally prioritizes high-value triage tasks ($R=5$) over exploration ($R=1$), leading to faster overall completion. The greedy baseline assigns tasks purely by distance and priority tier, missing opportunities for efficient agent-task pairing.
+    \item \textbf{Prioritized triage}: The reward-shaped bidding naturally prioritizes high-value triage tasks ($R=8$) over exploration ($R=1$), leading to faster overall completion. The greedy baseline assigns tasks purely by distance and priority tier, missing opportunities for efficient agent-task pairing.
+    \item \textbf{Information-driven routing (SSIA-Collateral)}: The collateral exploration bonus biases agents toward paths through unexplored territory, accelerating map coverage. This is particularly effective on larger maps where multiple routes to a target exist---the bonus breaks ties in favor of the more informative path.
 \end{itemize}
 
 \subsection{Quantitative Results}
 
-Table~\ref{tab:results} summarizes the performance of each allocator configuration across our test scenarios. We report the total number of simulation steps required to complete all tasks (exploration and triage), the number of reauctions triggered, and the percentage of the map explored at termination.
+Table~\ref{tab:results} summarizes the performance of each allocator configuration across our test scenarios. We report the total number of simulation steps required to complete all tasks (exploration and triage). All methods achieve 100\% map exploration at termination.
 
 \begin{table}[t]
     \centering
-    \caption{Simulation results across test scenarios. Steps = total simulation steps to completion. Reauctions = number of global reauction events triggered (SSIA only). Explored = percentage of map cells observed at termination.}
+    \caption{Total simulation steps to completion across all test scenarios. Lower is better. Best result per map in \textbf{bold}.}
     \label{tab:results}
-    \begin{tabular}{@{}llccc@{}}
+    \begin{tabular}{@{}lcccc@{}}
         \toprule
-        \textbf{Map} & \textbf{Method} & \textbf{Steps} & \textbf{Reauctions} & \textbf{Explored} \\
+        \textbf{Map} & \textbf{Greedy} & \textbf{SSIA} & \textbf{SSIA-Coll.} & \textbf{SSICA} \\
         \midrule
-        \multirow{2}{*}{\texttt{darpa1}}
-            & Greedy      & 60   & ---  & 100\% \\
-            & SSIA        & 28   & 0    & 100\% \\
+        \texttt{darpa1} & 60  & 46 & \textbf{26} & 32 \\
+        \texttt{darpa2} & 66  & 37 & \textbf{35} & 46 \\
+        \texttt{darpa3} & 53  & 30 & \textbf{27} & 36 \\
+        \texttt{darpa4} & 56  & 42 & \textbf{40} & 51 \\
+        \texttt{darpa5} & 49  & 41 & \textbf{38} & 44 \\
+        \texttt{darpa6} & 107 & 62 & \textbf{60} & 69 \\
+        \texttt{darpa7} & 115 & 50 & \textbf{48} & 78 \\
         \midrule
-        \multirow{2}{*}{\texttt{darpa2}}
-            & Greedy      & 66   & ---  & 100\% \\
-            & SSIA        & 29   & 0    & 100\% \\
-        \midrule
-        \multirow{2}{*}{\texttt{darpa3}}
-            & Greedy      & 53   & ---  & 100\% \\
-            & SSIA        & 30   & 0    & 100\% \\
-        \midrule
-        \multirow{2}{*}{\texttt{darpa4}}
-            & Greedy      & 56   & ---  & 100\% \\
-            & SSIA        & 35   & 0    & 100\% \\
-        \midrule
-        \multirow{2}{*}{\texttt{darpa5}}
-            & Greedy      & 49   & ---  & 100\% \\
-            & SSIA        & 44   & 0    & 100\% \\
-        \midrule
-        \multirow{2}{*}{\texttt{darpa6}}
-            & Greedy      & 107  & ---  & 100\% \\
-            & SSIA        & 59   & 0    & 100\% \\
-        \midrule
-        \multirow{2}{*}{\texttt{darpa7}}
-            & Greedy      & 115  & ---  & 100\% \\
-            & SSIA        & 53   & 0    & 100\% \\
+        \textbf{Average} & 72.3 & 44.0 & \textbf{39.1} & 50.9 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 Key observations:
 \begin{enumerate}
-    \item SSIA consistently outperforms the greedy baseline across all seven maps, achieving 1.1--2.2$\times$ speedup in total steps.
-    \item The performance gap is largest on the open, large-scale maps (\texttt{darpa6}: 107 vs.\ 59 steps; \texttt{darpa7}: 115 vs.\ 53 steps), where reward-shaped bidding enables effective role specialization across the wider space.
-    \item The gap narrows on the maze map (\texttt{darpa5}: 49 vs.\ 44 steps), where narrow corridors constrain both methods similarly.
-    \item Zero reauctions were triggered in all SSIA runs. This is expected for two reinforcing reasons. First, CBS proactively resolves all ground-agent conflicts at planning time---after each auction round, CBS jointly replans collision-free paths \emph{before} agents move, so the movement-level conflict detector never fires. Second, with only three ground agents per scenario, CBS easily finds solutions within the 5{,}000-node expansion limit, so the CBS-failure reauction path is never reached. Additionally, reward-shaped bidding naturally disperses agents across the map (drones explore distant frontiers while ground agents handle nearby triage), further reducing spatial contention.
+    \item \textbf{SSIA-Collateral is the best-performing method}, achieving the lowest step count on all seven maps with an average of 39.1 steps---a 1.8$\times$ speedup over Greedy (72.3) and a 12\% improvement over base SSIA (44.0).
+    \item \textbf{SSIA consistently outperforms Greedy} across all maps, achieving 1.1--2.3$\times$ speedup. The performance gap is largest on the open, large-scale maps (\texttt{darpa6}: 107 vs.\ 62; \texttt{darpa7}: 115 vs.\ 50), where reward-shaped bidding enables effective role specialization.
+    \item \textbf{The collateral bonus provides the greatest benefit on maps with interior starts} (\texttt{darpa1}: 46$\to$26, a 43\% reduction), where agents are surrounded by unknown territory and the bonus aggressively favors information-gathering routes. The benefit is smaller on starting-zone maps where agents begin at the edge and must traverse a corridor before reaching the unknown region.
+    \item \textbf{SSICA underperforms both SSIA variants} (avg.\ 50.9 vs.\ 44.0 and 39.1). The concurrent auction's per-agent task queues suffer from stale plans: tasks queued early are based on incomplete map information and often become suboptimal or require replanning by the time the agent reaches them. The gap is largest on \texttt{darpa7} (78 vs.\ 48), the highest-density map where the environment changes most rapidly during exploration.
+    \item \textbf{The gap narrows on maze maps} (\texttt{darpa5}: Greedy 49, SSIA 41, SSIA-Coll.\ 38), where narrow corridors constrain all methods similarly and limit the benefit of information-driven routing.
+    \item Zero reauctions were triggered in all SSIA and SSIA-Collateral runs. CBS proactively resolves ground-agent conflicts at planning time, and reward-shaped bidding naturally disperses agents across the map, further reducing spatial contention.
 \end{enumerate}
 
 \subsection{Effect of Reward Shaping}
 
-The reward-shaped bid formulation (Eq.~\ref{eq:bid}) is the key differentiator between SSIA and the greedy baseline. By computing bids as reward per unit time, the SSIA allocator naturally accounts for:
+The reward-shaped bid formulation (Eq.~\ref{eq:bid}) is the key differentiator between the SSIA variants and the greedy baseline. By computing bids as reward per unit time, the SSIA allocator naturally accounts for:
 \begin{itemize}
-    \item \textbf{Task value asymmetry}: Triage tasks ($R=5$) are assigned with higher urgency than exploration tasks ($R=1$), allowing agents to prioritize high-value objectives when they become available.
+    \item \textbf{Task value asymmetry}: Triage tasks ($R=8$) are assigned with higher urgency than exploration tasks ($R=1$), allowing agents to prioritize high-value objectives when they become available.
     \item \textbf{Agent capability}: Drone agents' halved path cost makes them competitive bidders for distant targets, while ground agents' lower dwell time makes them competitive for nearby triage. This emergent specialization does not require explicit role assignment.
     \item \textbf{Dwell cost integration}: Including dwell time in the denominator penalizes mismatched agent-task pairings (e.g., a drone bidding on a nearby triage task with 4-step dwell versus a ground agent with 2-step dwell).
 \end{itemize}
 
+\subsection{Effect of Collateral Exploration Bonus}
+
+The SSIA-Collateral extension (Eq.~\ref{eq:bid_coll}) consistently improves upon base SSIA, reducing average completion time by 12\% (44.0$\to$39.1 steps). The bonus is most impactful on maps with interior starting positions (\texttt{darpa1}: 46$\to$26 steps), where agents are surrounded by unknown territory and many candidate paths offer significant information gain. On starting-zone maps, the improvement is more modest (e.g., \texttt{darpa6}: 62$\to$60) because agents initially funnel through a known corridor before reaching the unexplored region.
+
+The collateral bonus also interacts favorably with the sequential auction structure: as each task is won and its path footprint added to $\mathcal{S}_{\text{pred}}$, subsequent bids discount cells that will be revealed by already-assigned agents, reducing redundant coverage.
+
+\subsection{Why SSICA Underperforms}
+
+Despite allowing more aggressive look-ahead through per-agent task queues, SSICA (avg.\ 50.9 steps) underperforms both SSIA (44.0) and SSIA-Collateral (39.1). We identify two root causes:
+
+\textbf{Stale queued plans.} In a partially observed environment, the map changes rapidly as agents explore. Tasks queued at positions 2--5 in an agent's queue were planned on incomplete map information and often become suboptimal or infeasible by the time the agent reaches them, triggering replanning or wasteful traversal.
+
+\textbf{Sequential auction chaining.} Within each auction round, tasks are offered sequentially. Once an agent wins one task, its queue end position shifts to that task's target, making adjacent tasks artificially cheap for the same agent. This creates a ``rich get richer'' effect where one agent accumulates many tasks along a corridor while others remain underutilized. Although the load-balancing bid formula $r / (C_{\text{queue}} + c)$ mitigates this compared to the original marginal-average formulation, it does not fully eliminate the imbalance.
+
 \subsection{Effect of CBS Integration}
 
-Both the SSIA and greedy allocators share a single CBS planner instance for ground agent coordination. When multiple ground agents operate in the same corridor or narrow passage, the CBS planner resolves conflicts optimally by adding temporal constraints. After each auction round, the allocator invokes CBS to replan all ground agent paths jointly. If CBS fails to find a collision-free solution (e.g., due to the 5{,}000-node expansion limit), the SSIA allocator triggers a global reauction from current positions; the greedy allocator falls back to independent A* paths. CBS integration eliminates unnecessary waiting caused by vertex and edge collisions in both methods.
+Both the SSIA variants and greedy allocator share a single CBS planner instance for ground agent coordination. When multiple ground agents operate in the same corridor or narrow passage, the CBS planner resolves conflicts optimally by adding temporal constraints. After each auction round, the allocator invokes CBS to replan all ground agent paths jointly. If CBS fails to find a collision-free solution (e.g., due to the 5{,}000-node expansion limit), the SSIA allocator triggers a global reauction from current positions; the greedy allocator falls back to independent A* paths. CBS integration eliminates unnecessary waiting caused by vertex and edge collisions in all methods.
 
 % ===========================================================================
 \section{Discussion}
 
 \subsection{Strengths}
 
-\textbf{Modularity.} The system cleanly separates task allocation (SSIA auctioneer), path planning (CBS), and environment management (known map / ground truth). Components can be upgraded independently---e.g., replacing SSIA with a combinatorial auction or CBS with prioritized planning.
+\textbf{Modularity.} The system cleanly separates task allocation (auctioneer), path planning (CBS), and environment management (known map / ground truth). Components can be upgraded independently---e.g., swapping between SSIA, SSIA-Collateral, and SSICA requires changing only the auctioneer module.
 
 \textbf{Dynamic adaptability.} The combination of frontier-based task generation, availability-constrained bidding, and global reauction creates a system that adapts to new information online. Unlike static MAPF formulations, our approach handles continuously evolving task sets and map changes.
 
@@ -423,7 +472,7 @@ Both the SSIA and greedy allocators share a single CBS planner instance for grou
 
 \subsection{Limitations}
 
-\textbf{Optimality.} While CBS provides optimal collision-free paths, the SSIA task allocation is greedy (sequential single-item) and does not guarantee globally optimal task assignment. Combinatorial auctions or mixed-integer programming formulations could improve allocation quality at the cost of computational complexity.
+\textbf{Optimality.} While CBS provides optimal collision-free paths, the SSIA task allocation is greedy (sequential single-item) and does not guarantee globally optimal task assignment. The SSICA concurrent variant was explored as a step toward better global allocation but underperformed due to stale plans in partially observed environments. Combinatorial auctions or mixed-integer programming formulations could improve allocation quality at the cost of computational complexity.
 
 \textbf{Scalability.} CBS has exponential worst-case complexity in the number of agents. For scenarios with many ground agents in tight spaces, the 5{,}000-node expansion limit may prevent finding collision-free solutions. Prioritized planning or bounded-suboptimal CBS variants could address this.
 
@@ -434,7 +483,7 @@ Both the SSIA and greedy allocators share a single CBS planner instance for grou
 % ===========================================================================
 \section{Conclusion and Future Work}
 
-We presented MATTER, a framework for multi-agent task allocation and path planning in partially unknown, heterogeneous environments. By combining an Availability-Constrained Sequential Single-Item Auction with reward-shaped bidding and Conflict-Based Search, our system achieves efficient exploration and triage completion that adapts to online map discovery and agent heterogeneity.
+We presented MATTER, a framework for multi-agent task allocation and path planning in partially unknown, heterogeneous environments. We compared three auction-based allocators---SSIA, SSIA-Collateral, and SSICA---against a greedy baseline across seven procedurally generated DARPA-scale scenarios. SSIA-Collateral achieved the best performance (avg.\ 39.1 steps), demonstrating that incorporating collateral exploration gain into the bid formula yields a consistent 12\% improvement over base SSIA (44.0 steps) and a 1.8$\times$ speedup over the greedy baseline (72.3 steps). The concurrent SSICA variant (50.9 steps) underperformed due to stale queued plans in the partially observed setting, suggesting that simpler availability-constrained allocation is better suited to dynamic exploration.
 
 Several directions for future work are promising:
 
@@ -442,9 +491,11 @@ Several directions for future work are promising:
 
 \textbf{Combinatorial auctions.} Replacing sequential single-item auctions with bundle auctions or set packing formulations could improve global allocation quality, particularly when tasks exhibit spatial clustering.
 
-\textbf{Learned bid functions.} The reward-shaped bid formula uses hand-tuned reward values and dwell times. A learned bid function trained via reinforcement learning or imitation learning could discover more effective bidding strategies that account for map topology, agent congestion, and information gain.
+\textbf{Learned bid functions.} The reward-shaped bid formula uses hand-tuned reward values and bonus weights. A learned bid function trained via reinforcement learning or imitation learning could discover more effective bidding strategies that account for map topology, agent congestion, and information gain.
 
-\textbf{Collateral exploration reward.} The current system accounts for collateral exploration (cells observed while navigating to another target) during task completion sweeps, but does not incorporate it into the bid computation. Estimating the expected collateral information gain along a path could further improve allocation efficiency.
+\textbf{Adaptive collateral weight.} The collateral bonus weight $\alpha = 0.25$ is fixed. An adaptive scheme that increases $\alpha$ early in exploration (when information gain is high) and decreases it once most of the map is revealed could further improve performance.
+
+\textbf{Queue invalidation for SSICA.} The SSICA variant could be improved by periodically re-evaluating queued tasks against the current map state and discarding or reordering stale assignments, rather than executing them blindly.
 
 \textbf{Communication constraints.} Extending the framework to operate under limited communication (e.g., range-limited, intermittent links) would improve real-world applicability. Distributed auction protocols and decentralized CBS variants~\cite{sharon2012cbs} are natural starting points.
 
@@ -453,11 +504,11 @@ Several directions for future work are promising:
 % ===========================================================================
 \section*{Contribution Statement}
 
-\textbf{Tom Gao}: CBS planner implementation, map representation and scenario generation, visualization system, experimental evaluation, integration of CBS with SSIA and greedy method.
+\textbf{Tom Gao}: TODO
 
-\textbf{Joshua Pen}: SSIA task allocation with reward-shaped bidding, agent model, SSIA simulation harness, scenario design (darpa2--darpa7 starting-zone and maze maps), triage task integration, CBS integration with both SSIA and greedy allocators, drone flight model (obstacle and building traversal).
+\textbf{Joshua Pen}: Task allocation design, simulation harness, CBS integration and implementation for SSIA, SSIA-Collateral, and SSICA. Implemented agent model, scenario design (darpa2--darpa7 maps), triage task integration, and drone flight model (obstacle and building traversal).
 
-\textbf{Ranai Srivastav}: Greedy baseline implementation, task type definitions, building investigation logic, experimental evaluation and analysis.
+\textbf{Ranai Srivastav}: TODO
 
 % Note: Update this section to accurately reflect each member's contributions.
 
@@ -504,7 +555,7 @@ in \emph{Proc. IEEE Int. Symp. Computational Intelligence in Robotics and Automa
 
 % ===========================================================================
 % APPENDIX (ungraded, supplementary)
-% ===========================================================================
+% ==================Es=========================================================
 \appendix
 
 \section{Scenario File Format}

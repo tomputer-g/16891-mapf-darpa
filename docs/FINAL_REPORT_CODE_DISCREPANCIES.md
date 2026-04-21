@@ -1,11 +1,15 @@
-# `final_report.tex` vs Code Discrepancies
+# `reports/final_report.tex` vs Code Discrepancies
 
 This version is organized by report section. Within each item, I list `Code`
 first and `Report` second.
 
 I only kept current, high-confidence mismatches after the latest
-`final_report.tex` edits. The old "omnidirectional motion" issue is no longer
-listed because the report now correctly describes 4-connected movement.
+`reports/final_report.tex` edits. The old "omnidirectional motion" issue is no
+longer listed because the report now correctly describes 4-connected movement.
+
+Package note: the runtime modules were later reorganized into `SSIA/`,
+`SSIA_collateral/`, and `SSICA/`. The older flat filenames below are kept only
+as historical labels for the discrepancy audit.
 
 ## Related Worksk
 
