@@ -107,6 +107,15 @@ class SequentialSingleItemAuctioneer:
         Returns (triage_count, investigation_count)."""
         triage_count = 0
         invest_count = 0
+        # ground_truth.objectives is the set of free-standing objective
+        # locations in the hidden scenario map. We iterate over those known
+        # objective coordinates, then check whether each one has actually been
+        # revealed in known_map before creating a TriageTask for it.
+        #
+        # In other words:
+        # - ground_truth tells us which cells are objective cells in reality
+        # - known_map tells us whether the team has observed that fact yet
+        # - _triage_locs prevents creating duplicate tasks for the same cell
         for loc in ground_truth.objectives:
             r, c = loc
             if known_map.state[r][c] == ObservationState.OBJECTIVE and loc not in self._triage_locs:
@@ -301,6 +310,9 @@ class SequentialSingleItemAuctioneer:
                 continue
 
             winner = max(bids, key=lambda b: (b.score, -b.agent_id))
+            # winner only stores the winning agent's id, so next(...) is used
+            # to recover the actual Agent object from available_agents.
+            # There should be exactly one such agent in the list.
             winning_agent = next(a for a in available_agents if a.id == winner.agent_id)
 
             task.assigned_to = winning_agent.id
@@ -333,6 +345,11 @@ class SequentialSingleItemAuctioneer:
         Drones:
         - obstacles do not block flight
         - blocked only if replanning fails
+
+        These checks are important because planning is optimistic: UNKNOWN
+        cells are treated as traversable during planning. Once the map is
+        observed, an assumed-free cell may turn out to be an obstacle, so a
+        previously valid path can become invalid at execution time.
         """
         if agent.current_task is None or agent.current_task.completed:
             return False

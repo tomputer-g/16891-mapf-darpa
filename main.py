@@ -15,7 +15,9 @@ from visualizer import SimulationVisualizer
 
 # Dwell steps required per agent type for triage tasks
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
-
+# Dwell steps are the number of full simulation steps an agent must remain
+# at a triage target before the task is marked complete. They are counted
+# once per outer loop iteration, after both movement microsteps.
 
 # ===========================================================================
 # Simulation event loop

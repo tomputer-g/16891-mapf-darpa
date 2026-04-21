@@ -174,9 +174,27 @@ def run_simulation(
         auctioneer.update(agents, known_map, ground_truth=ground_truth,
                           verbose=verbose)
 
-        # Handle agents stuck in REPLANNING (unreachable tasks)
+        # Handle agents stuck in REPLANNING.
+        #
+        # REPLANNING means the auction already chose a task for this agent, but
+        # the agent still needs a path from its current position to that task.
+        # If replan() fails, the current known map offers no feasible path.
+        #
+        # In SSICA we then skip that queued task and try the next queued task:
+        # - mark the current task completed so advance_queue() removes it
+        # - ask the queue for the next task already assigned to this agent
+        # - if one exists, keep the agent in REPLANNING and try again later
+        # - otherwise, clear the agent back to IDLE
+        #
+        # So your interpretation is mostly right, with one nuance:
+        # "completed" here means "discard this unreachable queued task so the
+        # queue can move on", not "the robot physically executed the task."
         for agent in agents:
             if agent.status == AgentStatus.REPLANNING:
+                # Yes in spirit: replan() returns False when no path was found
+                # (or when there is no current task). It does not literally
+                # check for None; it asks the planner for paths and returns
+                # False when planning fails. See agents.Agent.replan().
                 if not agent.replan(known_map):
                     if agent.current_task:
                         agent.current_task.completed = True

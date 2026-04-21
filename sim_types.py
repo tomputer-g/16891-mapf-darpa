@@ -85,7 +85,7 @@ class EventType(Enum):
     """Events exchanged in the simulation loop."""
     TASK_ASSIGNED = auto()   # auctioneer gave an agent a new task
     TASK_COMPLETE = auto()   # agent's current task is finished
-    PATH_BLOCKED  = auto()   # next waypoint turned out to be an obstacle
+    PATH_BLOCKED  = auto()   # next waypoint turned out to be an obstacle  # QUESTION: What does auto() do?
     STEP_COMPLETE = auto()   # normal single-step advance
 
     # EXTEND: AGENT_JOINED, COMMS_RECEIVED, BATTERY_LOW, OBJECTIVE_FOUND, …

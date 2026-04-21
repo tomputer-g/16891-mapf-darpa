@@ -101,6 +101,9 @@ class TriageTask(Task):
 
     @property
     def target_loc(self) -> Tuple[int, int]:
+        # Expose target_loc as a read-only attribute to match the abstract
+        # property in Task and let callers use task.target_loc instead of
+        # task.target_loc().
         return self._target_loc
 
     def check_completion(self, known_map: "KnownMap") -> bool:
@@ -130,7 +133,7 @@ class TaskAuctioneer:
 
     def __init__(self) -> None:
         self._tasks:      List[Task]            = []
-        self._known_locs: Set[Tuple[int, int]]  = set()   # dedup ExplorationTasks
+        self._known_locs: Set[Tuple[int, int]]  = set()   # dedup = deduplicate; avoid duplicate ExplorationTasks
         self._triage_locs: Set[Tuple[int, int]] = set()   # dedup TriageTasks
         self._invest_locs: Set[Tuple[int, int]] = set()   # dedup building investigations
 
@@ -195,6 +198,9 @@ class TaskAuctioneer:
         for loc in ground_truth.buildings:
             r, c = loc
             state = known_map.state[r][c]
+            # Check both states because known_map may already know the building
+            # is occupied if a ground agent observed it. ground_truth is only
+            # used here to enumerate building locations, not to read occupancy.
             if state in (ObservationState.BUILDING, ObservationState.OCCUPIED_BUILDING) and loc not in self._invest_locs:
                 task = TriageTask(loc, ground_only=True, dwell_steps=1)
                 task._is_investigation = True
@@ -213,6 +219,8 @@ class TaskAuctioneer:
         done_investigations: Set[Tuple[int, int]] = set()
         for t in self._tasks:
             if (isinstance(t, TriageTask)
+                    # Only investigation tasks get this attribute; getattr
+                    # avoids AttributeError on normal TriageTasks.
                     and getattr(t, '_is_investigation', False)
                     and t.completed):
                 done_investigations.add(t.target_loc)
@@ -276,6 +284,9 @@ class TaskAuctioneer:
         """
         available = self.pending()
         if not available:
+            # Happens when there are no unfinished unassigned tasks:
+            # nothing has been discovered yet, everything is already assigned,
+            # or everything is complete.
             return
 
         for agent in agents:
@@ -297,6 +308,9 @@ class TaskAuctioneer:
                 r1, c1 = t.target_loc
                 return (t.priority, -(abs(r1 - r0) + abs(c1 - c0)))
 
+            # Yes: for this agent, pick the remaining eligible task with the
+            # highest (priority, -Manhattan distance) score. Because we loop
+            # over agents, the overall assignment is greedy, not globally optimal.
             winner = max(eligible, key=score)
             winner.assigned_to = agent.id
             available.remove(winner)

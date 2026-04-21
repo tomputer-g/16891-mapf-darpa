@@ -36,7 +36,7 @@ class GroundTruthMap:
         self.grid = grid
         self.rows = len(grid)
         self.cols = len(grid[0])
-        self.objectives:   Set[Tuple[int, int]]          = objectives   or set()
+        self.objectives:   Set[Tuple[int, int]]          = objectives   or set()    # QUESTION: is this essentially if objectives is not None: self.objectives = objectives else objectives = set()
         self.buildings:    Dict[Tuple[int, int], bool]   = buildings    or {}
         self.agent_starts: List[Tuple[int, int, str]]    = agent_starts or []
 

@@ -64,7 +64,16 @@ class SequentialSingleItemAuctioneer:
         self.reauction_count: int = 0
         self._cbs: Optional[CBS] = cbs
         self._in_reauction: bool = False
-        # Per-agent task queue: agent_id -> list of queued Tasks (first = current)
+        # Per-agent task queue: agent_id -> ordered list of Tasks.
+        #
+        # SSICA is "concurrent" because agents are allowed to win more than one
+        # task in the same auction round. That only works if each agent can
+        # remember future commitments, so each agent owns a queue:
+        # - queue[0] is the task it is executing now (or will execute next)
+        # - queue[1:] are future tasks already promised to that agent
+        #
+        # Without this queue, SSICA would collapse back into SSIA-style
+        # "one active task per available agent" behavior.
         self._agent_queues: Dict[int, List[Task]] = {}
         # Cached cumulative cost per agent (sum of path+dwell for queued tasks)
         self._agent_queue_cost: Dict[int, float] = {}
@@ -233,13 +242,22 @@ class SequentialSingleItemAuctioneer:
 
         If the agent has queued tasks, this is the target of the last task.
         Otherwise it is the agent's current position.
+
+        This is the key queue-aware idea in SSICA: when the agent bids on a new
+        task, the bid is not computed from "where the robot is right now", but
+        from "where the robot will be after finishing the tasks it already won."
         """
         end = self._agent_queue_end.get(agent.id)
         return end if end is not None else agent.pos
 
     def _append_to_queue(self, agent: Agent, task: Task, path: List[Tuple[int, int]],
                          marginal_cost: float, effective_reward: float = None) -> None:
-        """Append a task to an agent's queue and update cached costs."""
+        """Append a task to an agent's queue and update cached costs.
+
+        The queue lets SSICA commit future work early. Once a task is appended,
+        later bids from the same agent become less attractive because their
+        cost is evaluated after all already-queued work.
+        """
         self._ensure_agent(agent)
         queue = self._agent_queues[agent.id]
         queue.append(task)
@@ -256,6 +274,9 @@ class SequentialSingleItemAuctioneer:
         """Pop the completed front task and assign the next one.
 
         Returns the new current task (or None if the queue is empty).
+
+        This is how queued commitments become active execution: when the front
+        task finishes, the next queued task moves into the current-task slot.
         """
         self._ensure_agent(agent)
         queue = self._agent_queues[agent.id]
