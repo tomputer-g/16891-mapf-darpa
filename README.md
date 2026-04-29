@@ -79,5 +79,7 @@ Branch `ranais/refactor` adds a repair-vs-reauction heuristic to the auction-bas
 - store winner and runner-up assignment metadata on tasks
 - attempt local path repair first when a committed path is invalidated
 - only trigger a full reauction when repaired retained quality falls below the stored alternative by more than a slack threshold, or coordinated repair fails
+- blocked-path events now move agents into `REPLANNING` while the allocator decides whether to keep or replace the assignment
+- full reauction no longer clears agents already on-target and actively dwelling on incomplete triage tasks
 
 This is a heuristic for reducing assignment churn. It is not presented as a provably optimal TAPF policy.

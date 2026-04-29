@@ -5,7 +5,7 @@ maps = ['generated/darpa%d.txt' % i for i in range(1, 8)]
 from SSIA.main import run_simulation as sim
 
 results = []
-for m in maps:                      # QUESTION: how does this main function work? We are writing to sys.stdout with an empty StringIO call?
+for m in maps:
     sys.stdout = io.StringIO()
     sim(m, max_steps=500, verbose=False, use_vis=False)
     out = sys.stdout.getvalue()

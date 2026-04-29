@@ -132,14 +132,14 @@ class TriageTask(Task):
 # Task Auctioneer
 # ===========================================================================
 
+# Historical note:
+# `TaskAuctioneer` was the original generic greedy auctioneer used before the
+# live naive baseline moved into `naive_task_allocation.py` in commit `fccfe6b`
+# (`Moved NaiveTaskAuctioneer; auction by task instead of by agent ID`).
+# It remains here as reference code only.
 class TaskAuctioneer:
     """
-    Owns the global task queue and runs assignment rounds.
-
-    Single-agent stub
-    -----------------
-    auction() selects the highest-priority unassigned task for each idle
-    agent, breaking ties by Manhattan distance (closer = preferred).
+    Legacy generic greedy auctioneer retained as reference code.
 
     EXTEND:
       - Compute per-agent bids (e.g. 1/distance, capability score).

@@ -16,6 +16,7 @@ Implements the sequential single-item auction allocator.
 - bid objects now retain execution-cost detail
 - winner and runner-up metadata are stored on assigned tasks
 - `handle_invalidated_assignment(...)` decides whether to keep the task after local repair or trigger full reauction
+- `trigger_global_reauction(...)` now preserves agents already dwelling on incomplete triage tasks instead of clearing that in-progress work
 
 ## Decision Logic
 

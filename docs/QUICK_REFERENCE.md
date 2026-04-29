@@ -49,6 +49,7 @@ The current behavior is:
 - compare repaired retained quality against the stored runner-up with a small slack threshold
 - keep the assignment if retained quality is still competitive
 - escalate to full reauction when repair fails, coordinated repair fails, or the stored alternative is clearly better
+- preserve agents already dwelling on incomplete triage tasks during full reauction instead of resetting that in-progress work
 
 This heuristic exists in:
 
@@ -79,8 +80,14 @@ Auction variants:
 - Drones plan independently.
 - `Agent.assign_task()` moves an agent into `REPLANNING`.
 - `planner.CBS.step()` emits `STEP_COMPLETE`, `PATH_BLOCKED`, or completion events as agents advance.
+- `PATH_BLOCKED` now moves the agent into `REPLANNING`, not `IDLE`, before the allocator decides whether to repair or reauction.
 
 The important consequence is that `PATH_BLOCKED` is a path-level failure signal, not necessarily an immediate proof that the whole assignment set should be discarded.
+
+Naive baseline note:
+
+- `main.py` still uses a simpler blocked-path policy: release the task and return the agent to `IDLE`.
+- The repair-vs-reauction heuristic only exists in `SSIA`, `SSIA_collateral`, and `SSICA`.
 
 ## Important Files
 

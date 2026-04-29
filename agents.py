@@ -219,7 +219,7 @@ class Agent:
         if event.kind == EventType.STEP_COMPLETE:
             self.pos = event.data['pos']
         elif event.kind == EventType.PATH_BLOCKED:
-            self.status = AgentStatus.IDLE
+            self.status = AgentStatus.REPLANNING
         return event
 
 
@@ -300,7 +300,7 @@ class DroneAgent(Agent):
         if event.kind == EventType.STEP_COMPLETE:
             self.pos = event.data['pos']
         elif event.kind == EventType.PATH_BLOCKED:
-            self.status = AgentStatus.IDLE
+            self.status = AgentStatus.REPLANNING
         return event
 
 

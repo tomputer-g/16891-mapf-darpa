@@ -15,6 +15,7 @@ Implements the queue-based concurrent auction allocator.
 - only the active head task carries fallback assignment metadata
 - `refresh_active_snapshot(...)` updates the live comparison context when a queued task becomes active
 - `handle_invalidated_assignment(...)` decides whether to repair the active task or trigger full reauction
+- full reauction preserves only an active dwell task that is already in progress on-target; queued tail work is still cleared
 
 ## Why SSICA Is Harder
 

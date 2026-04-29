@@ -10,13 +10,14 @@ Defines the task model used across all allocators.
 - `ExplorationTask`: frontier-style movement task
 - `TriageTask`: dwell-based task for investigation or triage work
 - `AssignmentSnapshot`: winner and runner-up metadata used by the repair-vs-reauction heuristic
-- `TaskAuctioneer`: older generic auctioneer implementation that is not the live naive baseline path
+- `TaskAuctioneer`: historical generic auctioneer implementation that is not the live naive baseline path
 
 ## Important Notes
 
 - Task priority is intrinsic to the task object.
 - The refactor branch adds `assignment_snapshot` to tasks so allocators can keep local fallback context when a path becomes invalid.
 - Clearing or replacing tasks now needs to clear stale snapshot metadata as well.
+- `TaskAuctioneer` is kept only as reference code. The live naive baseline moved to `NaiveTaskAuctioneer` in `naive_task_allocation.py` in commit `fccfe6b` (`Moved NaiveTaskAuctioneer; auction by task instead of by agent ID`).
 
 ## Common Pitfall
 

@@ -36,7 +36,7 @@ class GroundTruthMap:
         self.grid = grid
         self.rows = len(grid)
         self.cols = len(grid[0])
-        self.objectives:   Set[Tuple[int, int]]          = objectives   or set()    # QUESTION: is this essentially if objectives is not None: self.objectives = objectives else objectives = set()
+        self.objectives:   Set[Tuple[int, int]]          = objectives   or set()
         self.buildings:    Dict[Tuple[int, int], bool]   = buildings    or {}
         self.agent_starts: List[Tuple[int, int, str]]    = agent_starts or []
 
@@ -56,7 +56,6 @@ class KnownMap:
             [ObservationState.UNKNOWN] * cols for _ in range(rows)
         ]
 
-    #TODO Make this a 3x3 grid update, or variable grid update depending on the agent
     def update(self, loc: Tuple[int, int], obs: ObservationState) -> bool:
         """Write a new observation.  Returns True if the cell state changed."""
         r, c = loc
@@ -109,37 +108,6 @@ class KnownMap:
                 else:
                     row += self.state[r][c].symbol()
             print(row)
-
-
-# ===========================================================================
-# Scenario factory
-# ===========================================================================
-
-def load_scenario(path: str) -> Tuple[GroundTruthMap, List[Tuple[int, int]]]:
-    """Deprecated — use load_new_scenario() instead.
-
-    Reads the old HW-style format (4-int agent lines, no objectives/buildings).
-    Returns (GroundTruthMap, agent_starts) for backward compatibility.
-    """
-    lines = Path(path).read_text().splitlines()
-    it = (ln for ln in lines if ln.strip())   # skip blank lines
-
-    rows, cols = map(int, next(it).split())
-
-    grid: List[List[bool]] = []
-    for _ in range(rows):
-        tokens = next(it).split()
-        # Support both compact ("@@@..") and space-separated ("@ @ @") formats.
-        cells = list(tokens[0]) if len(tokens) == 1 else tokens
-        grid.append([cell == '@' for cell in cells])
-
-    num_agents = int(next(it))
-    agent_starts: List[Tuple[int, int]] = []
-    for _ in range(num_agents):
-        sr, sc, *_ = map(int, next(it).split())
-        agent_starts.append((sr, sc))
-
-    return GroundTruthMap(grid), agent_starts
 
 
 def load_new_scenario(path: str) -> GroundTruthMap:

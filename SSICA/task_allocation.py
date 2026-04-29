@@ -11,8 +11,10 @@ target.  The highest-scoring bid wins; the task is appended to the
 winner's queue.
 
 Because the environment is only partially known, assignments are monitored
-continuously. If a path becomes infeasible or a simple inter-robot motion
-conflict is detected, a global reauction is triggered.
+continuously. Only the active head task stores repair fallback metadata, so
+an invalidated path first goes through a repair-vs-reauction check. Full
+reauction preserves only an active on-target dwell task that is already in
+progress; queued tail work is cleared.
 """
 
 from __future__ import annotations
@@ -312,6 +314,41 @@ class SequentialSingleItemAuctioneer:
         self._agent_queue_cost[agent.id] = 0.0
         self._agent_queue_reward[agent.id] = 0.0
         self._agent_queue_end[agent.id] = None
+
+    @staticmethod
+    def _is_dwelling_agent(agent: Agent) -> bool:
+        task = agent.current_task
+        return (
+            isinstance(task, TriageTask)
+            and not task.completed
+            and agent.pos == task.target_loc
+        )
+
+    def _preserve_active_queue_head(self, agent: Agent) -> None:
+        """Keep only the active dwell task when reauction clears the queue."""
+        self._ensure_agent(agent)
+        task = agent.current_task
+        if task is None:
+            self._clear_agent_queue(agent)
+            return
+
+        for queued in self._agent_queues[agent.id]:
+            if queued is task:
+                continue
+            if not queued.completed:
+                queued.assigned_to = None
+            queued.assignment_snapshot = None
+
+        self._agent_queues[agent.id] = [task]
+        task.assigned_to = agent.id
+        task.assignment_snapshot = None
+        self._agent_queue_cost[agent.id] = getattr(task, '_queued_marginal_cost', 0.0)
+        self._agent_queue_reward[agent.id] = getattr(
+            task,
+            '_queued_effective_reward',
+            _TASK_REWARD.get(type(task), 1),
+        )
+        self._agent_queue_end[agent.id] = task.target_loc
 
     def clear_agent_queue(self, agent: Agent) -> None:
         """Public interface to clear an agent's task queue."""
@@ -814,19 +851,34 @@ class SequentialSingleItemAuctioneer:
 
     def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
-        Release all incomplete assignments, clear all queues, and run a
-        fresh auction round.
+        Release incomplete assignments, preserving only active on-target dwell
+        work, then clear remaining queues and run a fresh auction round.
         """
         self.reauction_count += 1
+        preserved_by_task: Dict[int, int] = {
+            agent.current_task.task_id: agent.id
+            for agent in agents
+            if self._is_dwelling_agent(agent) and agent.current_task is not None
+        }
 
         for task in self._tasks:
             if not task.completed:
+                keeper_id = preserved_by_task.get(task.task_id)
+                if keeper_id is not None:
+                    task.assigned_to = keeper_id
+                    task.assignment_snapshot = None
+                    continue
                 task.assigned_to = None
                 task.assignment_snapshot = None
                 if isinstance(task, TriageTask):
                     task.progress = 0
 
         for agent in agents:
+            if self._is_dwelling_agent(agent):
+                self._preserve_active_queue_head(agent)
+                agent.path = []
+                agent.status = AgentStatus.NAVIGATING
+                continue
             self._clear_agent_queue(agent)
             agent.current_task = None
             agent.path = []

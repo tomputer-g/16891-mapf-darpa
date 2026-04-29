@@ -1,22 +1,16 @@
 """
 Auction and task allocation for the DARPA exploration simulation.
 
-Availability-Constrained Sequential Single-Item Auction with Global
-Reauction Trigger
----------------------------------------------------------------
-Tasks are auctioned one at a time. Only robots that are currently
-available, meaning they do not hold an active incomplete task, may bid.
-Each bid is the marginal motion cost to reach the task target on the
-current known map. The lowest feasible bid wins.
+Greedy queue-ordered baseline allocator.
 
-Because the environment is only partially known, assignments are monitored
-continuously. If a path becomes infeasible or a simple inter-robot motion
-conflict is detected, a global reauction is triggered. All incomplete
-non-executing work is released, agent-task assignments are cleared, and a
-new auction round is run from the robots' current states.
+This module is the live naive baseline used by `main.py`.
 
-This gives a lightweight event-driven allocator for dynamic exploration
-without requiring a full multi-agent constraint tree.
+- pending tasks are considered in queue order
+- eligible idle agents are scored by `(task.priority, -ManhattanDistance)`
+- ground-only triage tasks exclude drones
+- blocked paths are handled in `main.py` by releasing the task back to the
+  pending pool; this module does not implement the SSIA-family
+  repair-vs-reauction heuristic
 """
 
 from __future__ import annotations
@@ -36,12 +30,7 @@ from tasks import ExplorationTask, Task, TriageTask
 
 class NaiveTaskAuctioneer:
     """
-    Owns the global task queue and runs assignment rounds.
-
-    Single-agent stub
-    -----------------
-    auction() selects the highest-priority unassigned task for each idle
-    agent, breaking ties by Manhattan distance (closer = preferred).
+    Greedy baseline auctioneer used by `main.py`.
 
     EXTEND:
       - Compute per-agent bids (e.g. 1/distance, capability score).

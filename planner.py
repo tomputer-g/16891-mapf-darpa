@@ -371,6 +371,6 @@ class CBS:
         next_pos = path[1]
         if agent_id not in self._drone_ids and not known_map.is_passable(next_pos):
             self._paths[agent_id] = []
-            return Event(EventType.PATH_BLOCKED, {'agent': agent_id, 'blocked_at': next_pos}) # QUESTION: Is this basically a conflict?
+            return Event(EventType.PATH_BLOCKED, {'agent': agent_id, 'blocked_at': next_pos})
         self._paths[agent_id] = path[1:]
         return Event(EventType.STEP_COMPLETE, {'agent': agent_id, 'pos': next_pos})

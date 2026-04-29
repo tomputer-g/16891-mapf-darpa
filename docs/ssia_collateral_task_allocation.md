@@ -15,6 +15,7 @@ Implements SSIA with a collateral exploration bonus.
 - stores winner and runner-up metadata on tasks
 - freezes the effective reward used at assignment time
 - compares repaired retained quality against the stored alternative without recomputing collateral during the repair check
+- preserves agents already dwelling on incomplete triage tasks during full reauction
 
 ## Important Note
 

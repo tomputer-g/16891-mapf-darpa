@@ -16,3 +16,5 @@ On `PATH_BLOCKED`, the loop no longer directly drops the task. It calls the auct
 
 - local repair and task retention
 - full reauction
+
+If full reauction happens, agents already dwelling on incomplete triage tasks are preserved by the allocator instead of being reset.

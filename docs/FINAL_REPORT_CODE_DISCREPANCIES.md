@@ -1,115 +1,190 @@
-# `reports/final_report.tex` vs Code Discrepancies
+# `reports/final_report.tex` vs Current Code
 
-This version is organized by report section. Within each item, I list `Code`
-first and `Report` second.
+This audit tracks the current code in the repo as of the refactored layout:
 
-I only kept current, high-confidence mismatches after the latest
-`reports/final_report.tex` edits. The old "omnidirectional motion" issue is no
-longer listed because the report now correctly describes 4-connected movement.
+- `main.py` for the greedy baseline
+- `SSIA/` for SSIA
+- `SSIA_collateral/` for SSIA-Collateral
+- `SSICA/` for SSICA
 
-Package note: the runtime modules were later reorganized into `SSIA/`,
-`SSIA_collateral/`, and `SSICA/`. The older flat filenames below are kept only
-as historical labels for the discrepancy audit.
+The list below prioritizes behavior and architecture mismatches over small
+constant/value mismatches.
 
-## Related Worksk
+## Highest-Priority Discrepancies
 
-### Reauction trigger is still overstated
-
-- Code:
-  - `SSIA_main.py:80-87` releases only the blocked agent's current task when a path step hits a newly revealed obstacle.
-  - `SSIA_task_allocation.py:533-548` and `SSIA_collateral_task_allocation.py:581-596` release only infeasible tasks and then continue with normal auctioning.
-  - `SSIA_task_allocation.py:415-445` and `SSIA_collateral_task_allocation.py:463-493` reserve global reauction for same-type next-move conflicts or CBS failure.
-- Report:
-  - `final_report.tex:75` says the event-triggered global reauction mechanism handles newly discovered obstacles and motion infeasibility.
-- Why this matters:
-  - In the current SSIA-family code, ordinary obstacle discovery does not trigger a full global reauction.
-
-## Proposed Method
-
-### Task Types / SSIA Reward-Shaped Bid: triage reward still does not match the implementations
+### 1. The report still overstates "auction + CBS" as one unified planner for the whole team
 
 - Code:
-  - `SSIA_task_allocation.py:34-38` uses `TriageTask: 3`.
-  - `SSIA_collateral_task_allocation.py:34-38` uses `TriageTask: 8`.
-  - `SSICA_task_allocation.py:30-34` uses `TriageTask: 8`.
+  - `planner.py` runs CBS only for the ground-agent subset passed in by the
+    auctioneers.
+  - Drones bid and replan independently through `plan_path(...)` or
+    `CBS.plan(..., drone=True)` without joint collision resolution.
+  - `SSIA/task_allocation.py`, `SSIA_collateral/task_allocation.py`, and
+    `SSICA/task_allocation.py` still do a separate same-type next-move screen,
+    so drone-drone conflicts are not fully ignored at the allocator level.
 - Report:
-  - `final_report.tex:124-128` says `R_{\text{triage}} = 5`.
-  - `final_report.tex:153-157` again uses `R_{\text{triage}} = 5` in the SSIA bid description.
+  - The abstract, introduction, preliminaries, and CBS discussion read like
+    the system uses one CBS-backed MAPF layer for the whole heterogeneous team,
+    and also say drone-drone collisions are not considered.
 - Why this matters:
-  - The report still presents one shared triage reward value, but the live implementations do not share a single constant.
+  - The live system is better described as auction-based task allocation plus
+    CBS coordination for active ground agents, with drones planned
+    independently.
 
-### SSIA / Global Reauction Trigger: path infeasibility is released, not preserved through individual replanning
+### 2. Building investigation is described as an occupancy-reveal step, but the code uses it as a mandatory dwell gate
 
 - Code:
-  - `SSIA_main.py:80-87` clears the blocked agent's assignment immediately on `PATH_BLOCKED`.
-  - `SSIA_task_allocation.py:533-542` and `SSIA_collateral_task_allocation.py:581-590` release infeasible tasks and return the agent to `IDLE`.
+  - `GroundAgent.observe()` immediately writes `OCCUPIED_BUILDING` vs
+    `BUILDING` into `KnownMap` within the ground agent's sensor radius.
+  - All three allocators still create a 1-step ground-only investigation task
+    for every discovered building by using `TriageTask(..., dwell_steps=1)` and
+    setting `_is_investigation = True`.
+  - `add_confirmed_building_triage(...)` waits for that investigation task to
+    complete before creating the actual occupied-building triage task.
 - Report:
-  - `final_report.tex:193` says path infeasibility is handled by individual agent replanning without triggering a global reauction.
+  - The task-model text says the investigation step reveals whether the
+    building contains an objective and refers to an `InvestTask`.
 - Why this matters:
-  - The code does avoid a global reauction here, but it also does not preserve the original assignment via pure replanning.
+  - In the current code there is no separate `InvestTask`, and investigation is
+    not the step that reveals occupancy. It is a workflow gate before
+    building-triage task creation.
 
-### CBS / Drone Handling: report still says inter-drone collisions are impossible, code still checks them for reauction
+### 3. Obstacle/path handling is now repair-first and snapshot-based, not direct global reauction
 
 - Code:
-  - `SSIA_task_allocation.py:374-423`, `SSIA_collateral_task_allocation.py:422-471`, and `SSICA_task_allocation.py:568-617` group agents by `agent_type` and check same-type next-move conflicts, which includes drone-drone conflicts.
+  - `handle_invalidated_assignment(...)` in all three auction allocators first
+    tries local path repair.
+  - The repaired retained assignment is then compared against the stored
+    winner/runner-up snapshot on the task.
+  - The assignment is kept unless repair fails, the retained score loses to the
+    stored runner-up beyond slack, or coordinated ground CBS repair fails.
 - Report:
-  - `final_report.tex:286-287` says multiple drones can operate at distinct flight altitudes, eliminating the possibility of inter-drone collisions.
+  - Related Work, SSIA conflict-management text, and qualitative analysis still
+    describe newly discovered obstacles or path infeasibility as direct global
+    reauction triggers, or describe the logic as "A* first, then CBS if A*
+    fails."
 - Why this matters:
-  - CBS excludes drones, but the higher-level reauction logic still treats drone-drone next-move conflicts as real conflicts.
+  - This is the biggest high-level behavior change relative to the older
+    report narrative.
 
-### Simulation Loop / Allocator Configurations: the report still describes one auction cadence and one shared harness
+### 4. Global reauction preservation is narrower than the report says
 
 - Code:
-  - `main.py:194-221` defers naive auctioning until after both microsteps.
-  - `SSIA_main.py:52-57`, `SSIA_main.py:95`, and `SSIA_main.py:157-160` call `auctioneer.update(...)` after microstep 1, after the drone microstep, and again after triage progress.
-  - `SSIA_collateral_main.py:52-57`, `SSIA_collateral_main.py:95`, and `SSIA_collateral_main.py:157-160` do the same.
-  - `SSICA_main.py:52-57`, `SSICA_main.py:110`, and `SSICA_main.py:172-175` do the same.
+  - `SSIA/task_allocation.py` and `SSIA_collateral/task_allocation.py` preserve
+    only incomplete on-target dwelling `TriageTask`s during full reauction.
+    That includes investigation tasks because they are encoded as
+    `TriageTask`s.
+  - `SSICA/task_allocation.py` preserves only the active head dwell task and
+    clears the queued tail.
 - Report:
-  - `final_report.tex:320` says post-observation updates assign tasks to idle agents.
-  - `final_report.tex:322` says the drone-microstep update happens without a new auction round.
-  - `final_report.tex:324` says a single auction round runs once per step.
-  - `final_report.tex:374` says all configurations use the same simulation harness.
+  - The SSIA text is broader, reading as if agents that have reached their goal
+    locations generally keep their work, or as if reauction either resets or
+    preserves all goal-reached work.
 - Why this matters:
-  - The SSIA-family loops can auction multiple times per full step, while the naive loop defers auctioning until the end of the step.
-  - This section is also internally inconsistent: step 3 already assigns tasks, then step 7 says auction runs once per step.
+  - The live exception is specifically "already dwelling on the active task,"
+    not a blanket reached-goal rule.
 
-## Results
-
-### Qualitative Analysis / Figure Caption: caption does not match the current renderer
+### 5. The report still describes one shared harness and one auction round per step
 
 - Code:
-  - `visualizer.py:219-223` uses per-agent colors for both dashed path lines and task stars.
+  - `main.py` defers auctioning until after both movement microsteps.
+  - `SSIA/main.py`, `SSIA_collateral/main.py`, and `SSICA/main.py` call
+    `auctioneer.update(...)` after the initial observation, after each
+    observation phase, and again after triage progress.
+  - That means the SSIA-family allocators can create tasks, sweep
+    collateral completions, repair assignments, and auction multiple times
+    inside one outer simulation step.
 - Report:
-  - `final_report.tex:387` says task targets are gold stars and planned paths are dashed cyan lines.
+  - The Simulation Loop and Allocator Configurations sections say all methods
+    use the same harness and imply a single auction round once per full step.
 - Why this matters:
-  - The caption describes an older visual style, not the figure produced by the current renderer.
+  - This is a structural runtime difference, not just an implementation detail.
 
-### Qualitative Analysis: obstacle-triggered global reallocation is still overstated
+### 6. Bid computation and CBS coordination are more decoupled than the report suggests
 
 - Code:
-  - `SSIA_main.py:80-87` and `SSIA_task_allocation.py:533-548` release the blocked or infeasible task rather than globally redistributing all incomplete tasks.
-  - Global reauction is limited to same-type next-move conflicts or CBS failure in `SSIA_task_allocation.py:415-445` and `SSIA_collateral_task_allocation.py:463-493`.
+  - SSIA-family bids and repair screens use `agents.plan_path(...)`, which is
+    an optimistic single-agent path estimate on the current `KnownMap`.
+  - Joint CBS is only run afterward as a coordination pass for currently
+    navigating ground agents.
+  - The naive baseline is even less uniform: newly assigned agents replan
+    individually, and its `_cbs_replan_ground()` hook only touches already
+    navigating ground agents when an auction round runs.
 - Report:
-  - `final_report.tex:394` says newly discovered obstacles trigger global reauction and redistribution of all incomplete tasks from the current agent states.
+  - Several sections make it sound like the same CBS-backed planner directly
+    supplies the per-task path costs used by the allocators for all methods.
 - Why this matters:
-  - This repeats the same behavior mismatch from the method section in the results narrative.
+  - The live allocation logic uses optimistic independent costs first and only
+    then tries to restore coordinated ground motion.
 
-### Qualitative Analysis / Effect of Reward Shaping: triage reward is still internally inconsistent and not aligned with SSIA
+### 7. SSICA queue behavior is only partially described in the report
 
 - Code:
-  - `SSIA_task_allocation.py:34-38` uses `R_{\text{triage}} = 3` for SSIA.
-  - `SSIA_collateral_task_allocation.py:34-38` and `SSICA_task_allocation.py:30-34` use `R_{\text{triage}} = 8` for SSIA-Collateral and SSICA.
+  - Only the active queue head gets a refreshed `assignment_snapshot`.
+  - Queued tail tasks keep cached path/cost/reward metadata, but not the same
+    repair fallback snapshot semantics.
+  - Full reauction clears the queued tail and keeps at most the active on-goal
+    dwell task.
 - Report:
-  - `final_report.tex:128` and `final_report.tex:155` say `R_{\text{triage}} = 5`.
-  - `final_report.tex:395` and `final_report.tex:438` say `R = 8`.
+  - The SSICA section describes queue-aware bidding but does not mention this
+    head-vs-tail asymmetry.
 - Why this matters:
-  - The report is still internally inconsistent, and the SSIA method description still does not match the current SSIA code.
+  - It is important for understanding stale queued work and why SSICA clears
+    more aggressively than SSIA during reauction.
 
-### Qualitative Analysis: greedy baseline wording still overstates the role of priority
+## Secondary Discrepancies
+
+### Triage reward constants still do not match the report
 
 - Code:
-  - `naive_task_allocation.py:185-210` iterates tasks in queue order and only uses `(priority, -distance)` when choosing the agent for the current task.
+  - `SSIA/task_allocation.py` uses `TriageTask: 3`.
+  - `SSIA_collateral/task_allocation.py` uses `TriageTask: 8`.
+  - `SSICA/task_allocation.py` uses `TriageTask: 8`.
 - Report:
-  - `final_report.tex:395` says the greedy baseline assigns tasks purely by "distance and priority tier."
+  - `reports/final_report.tex` still presents `R_{\text{triage}} = 5`.
 - Why this matters:
-  - Priority tier does not determine which task is considered first; queue insertion order still dominates task ordering.
+  - Lower priority than the behavioral mismatches, but the paper still presents
+    one shared value that the implementations do not share.
+
+### Greedy baseline wording still overstates priority-driven task ordering
+
+- Code:
+  - `naive_task_allocation.py` iterates tasks in queue order.
+  - `(priority, -distance)` is only used when choosing the agent for the
+    current task.
+- Report:
+  - The qualitative-analysis text still says the greedy baseline assigns tasks
+    purely by distance and priority tier.
+- Why this matters:
+  - Priority affects which agent wins the current task, but queue insertion
+    order still controls which task is considered first.
+
+### Visualization caption is outdated
+
+- Code:
+  - `visualizer.py` uses per-agent colors for both dashed path lines and task
+    stars.
+- Report:
+  - The figure caption still says planned paths are dashed cyan lines and task
+    targets are gold stars.
+
+### Drone-collision language is still too absolute
+
+- Code:
+  - CBS excludes drones, but the SSIA-family allocators still check same-type
+    next-move conflicts, which includes drone-drone conflicts.
+- Report:
+  - The agent-model text says drone-drone collisions are not considered.
+
+## Checked Items That Currently Match
+
+- The abstract and results-table completion-step values currently match:
+  - `naive_results.txt`
+  - `ssia_results.txt`
+  - `ssia_collateral_results.txt`
+  - `ssica_results.txt`
+- The current root results are:
+  - Greedy: `72.3`
+  - SSIA: `43.7`
+  - SSIA-Collateral: `39.7`
+  - SSICA: `50.9`

@@ -17,6 +17,8 @@ Defines the agent state machine, sensing behavior, task assignment hooks, and pe
 - Successful planning produces a committed path.
 - Triage-style work can advance progress without physical movement.
 - Planner stepping emits events such as `STEP_COMPLETE` and `PATH_BLOCKED`.
+- `PATH_BLOCKED` now moves the agent into `REPLANNING` so the allocator can attempt repair before deciding on reauction.
+- An agent can remain stationary on `task.target_loc` while `TriageTask.progress` continues to increase.
 
 ## Why This File Matters
 

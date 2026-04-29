@@ -1,22 +1,16 @@
 """
 Auction and task allocation for the DARPA exploration simulation.
 
-Availability-Constrained Sequential Single-Item Auction with Global
-Reauction Trigger
----------------------------------------------------------------
-Tasks are auctioned one at a time. Only robots that are currently
-available, meaning they do not hold an active incomplete task, may bid.
-Each bid is the marginal motion cost to reach the task target on the
-current known map. The lowest feasible bid wins.
+Collateral-aware sequential single-item auction with
+repair-vs-reauction control.
 
-Because the environment is only partially known, assignments are monitored
-continuously. If a path becomes infeasible or a simple inter-robot motion
-conflict is detected, a global reauction is triggered. All incomplete
-non-executing work is released, agent-task assignments are cleared, and a
-new auction round is run from the robots' current states.
+This variant keeps the SSIA structure but shapes bids with a collateral
+exploration bonus. Like SSIA, it stores winner and runner-up metadata on
+tasks, attempts local repair first on invalidated paths, and only escalates
+to global reauction when repair fails or becomes clearly unattractive.
 
-This gives a lightweight event-driven allocator for dynamic exploration
-without requiring a full multi-agent constraint tree.
+During full reauction, agents already dwelling on incomplete triage tasks are
+preserved instead of having that in-progress work reset.
 """
 
 from __future__ import annotations
@@ -517,6 +511,15 @@ class SequentialSingleItemAuctioneer:
     # ------------------------------------------------------------------
     # Reauction support
     # ------------------------------------------------------------------
+    @staticmethod
+    def _is_dwelling_agent(agent: Agent) -> bool:
+        task = agent.current_task
+        return (
+            isinstance(task, TriageTask)
+            and not task.completed
+            and agent.pos == task.target_loc
+        )
+
     def _path_infeasible(self, agent: Agent, known_map: KnownMap) -> bool:
         """
         Detect whether the agent's current assignment is no longer feasible.
@@ -602,12 +605,23 @@ class SequentialSingleItemAuctioneer:
 
     def trigger_global_reauction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
-        Release all incomplete assignments and run a fresh auction round.
+        Release incomplete assignments except triage tasks already being
+        executed on-target, then run a fresh auction round.
         """
         self.reauction_count += 1
+        preserved_by_task: Dict[int, int] = {
+            agent.current_task.task_id: agent.id
+            for agent in agents
+            if self._is_dwelling_agent(agent) and agent.current_task is not None
+        }
 
         for task in self._tasks:
             if not task.completed:
+                keeper_id = preserved_by_task.get(task.task_id)
+                if keeper_id is not None:
+                    task.assigned_to = keeper_id
+                    task.assignment_snapshot = None
+                    continue
                 task.assigned_to = None
                 task.assignment_snapshot = None
                 # Reset dwell progress so the new winner starts fresh
@@ -615,6 +629,10 @@ class SequentialSingleItemAuctioneer:
                     task.progress = 0
 
         for agent in agents:
+            if self._is_dwelling_agent(agent):
+                agent.path = []
+                agent.status = AgentStatus.NAVIGATING
+                continue
             agent.current_task = None
             agent.path = []
             agent.status = AgentStatus.IDLE

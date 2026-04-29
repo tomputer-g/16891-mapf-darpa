@@ -9,7 +9,7 @@ from agents import DroneAgent, GroundAgent
 from maps import KnownMap, load_new_scenario
 from planner import CBS
 from sim_types import AgentStatus, AgentType, EventType
-from tasks import TaskAuctioneer, TriageTask
+from tasks import TriageTask
 from naive_task_allocation import NaiveTaskAuctioneer
 from visualizer import SimulationVisualizer
 
@@ -50,8 +50,6 @@ def _update_triage_progress(agents, verbose: bool) -> None:
         else:
             if task.progress != 0:
                 task.progress = 0
-
-from tasks import TriageTask, ExplorationTask
 
 def _post_observation_updates(agents, auctioneer, known_map, ground_truth, verbose: bool,
                               run_auction: bool = True) -> None:
@@ -158,7 +156,6 @@ def run_simulation(
             vis.update(known_map, agents, step, auctioneer.stats())
 
         # Global microsteps: all agents move once, then drones move a second time.
-        observed_this_step = False
         for microstep in range(2):
             moved_any = False
 
@@ -187,7 +184,6 @@ def run_simulation(
             if not moved_any:
                 continue
 
-            observed_this_step = True
             for agent in agents:
                 agent.observe(ground_truth, known_map)
 
@@ -243,7 +239,7 @@ def run_simulation(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DARPA exploration simulation")
     parser.add_argument("path", nargs="?", default="generated/darpa1.txt",
-                        help="scenario file to load (default: built-in 10×10 map)")
+                        help="scenario file to load (default: generated/darpa1.txt)")
     parser.add_argument("--steps", type=int, default=200, metavar="N",
                         help="maximum simulation steps (default: 200)")
     parser.add_argument("--quiet", action="store_true",

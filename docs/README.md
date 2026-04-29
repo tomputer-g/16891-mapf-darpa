@@ -45,3 +45,8 @@ The top-level docs were too thin for resuming work after a pause. This folder is
 - what assumptions each allocator makes
 - which code paths are active versus legacy or misleading
 - where the report-writing notes and benchmark history live
+
+Historical note:
+
+- `TaskAuctioneer` in `tasks.py` is kept as reference code only.
+- The live naive baseline uses `NaiveTaskAuctioneer` in `naive_task_allocation.py`.

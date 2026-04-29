@@ -9,6 +9,10 @@ Documentation refresh after the refactor:
 - expanded [../README.md](../README.md) and added [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
 - added [before_after.md](before_after.md) with recorded benchmark results
 - converted `SSIA`, `SSIA_collateral`, and `SSICA` into importable packages
+- global reauction now preserves agents already dwelling on incomplete triage tasks instead of resetting that in-progress work
+- blocked-path events now move agents into `REPLANNING` instead of `IDLE` before the allocator decides whether to repair or reauction
+- clarified that `TaskAuctioneer` in `tasks.py` is historical reference code and that the live naive baseline is `NaiveTaskAuctioneer`
+- removed the unused deprecated `maps.load_scenario()` compatibility loader and cleaned stale comments/imports in the naive runtime path
 
 ## `2d147fc` `Add repair-vs-reauction heuristic`
 

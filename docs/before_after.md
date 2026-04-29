@@ -2,6 +2,12 @@
 
 This file records the batch-run results for the repair-vs-reauction refactor on branch `ranais/refactor`.
 
+Historical note:
+
+- This benchmark covers commit `2d147fc` (`Add repair-vs-reauction heuristic`).
+- Later branch work also changed blocked-agent status handling (`PATH_BLOCKED -> REPLANNING`) and global reauction behavior for already-dwelling triage agents.
+- So this table is still useful as a milestone benchmark, but it is not a benchmark of the current `HEAD`.
+
 ## Scope
 
 - Baseline snapshot commit: `0c90b7f` `Snapshot simulator state before refactor`

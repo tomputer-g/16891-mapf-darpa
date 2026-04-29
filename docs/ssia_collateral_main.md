@@ -8,6 +8,7 @@ Runs the collateral-aware SSIA simulation loop.
 
 - uses the collateral-aware auctioneer
 - keeps the same repair-vs-reauction handoff pattern when a path is blocked
+- preserves already-dwelling triage agents if full reauction happens
 
 ## Why It Exists
 
