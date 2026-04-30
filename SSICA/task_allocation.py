@@ -90,6 +90,9 @@ class SequentialSingleItemAuctioneer:
         # Map dimensions (set on first auction call)
         self._map_rows: int = 0
         self._map_cols: int = 0
+        # Tracks number of known obstacle cells observed so far; growth
+        # between updates triggers a global reauction.
+        self._known_obstacle_count: int = 0
 
     # ------------------------------------------------------------------
     # Task bookkeeping
@@ -843,9 +846,10 @@ class SequentialSingleItemAuctioneer:
         """
         Check for global reauction conditions.
 
-        Only triggers on inter-robot motion conflicts (vertex or edge
-        collisions between same-type agents). Path infeasibility and
-        new task discovery are handled by normal replanning and auction.
+        Triggers on inter-robot motion conflicts (vertex or edge
+        collisions between same-type agents). New high-value task
+        discovery is handled inline in :meth:`update`. Path infeasibility
+        is handled by normal replanning and auction.
         """
         return self._next_move_conflict(agents)
 
@@ -952,6 +956,18 @@ class SequentialSingleItemAuctioneer:
         # investigation tasks (preliminary building checks).
         new_high_value_tasks = (new_triage + new_bldg) > 0
 
+        # Detect newly observed obstacles since last update.
+        obstacle_count = sum(
+            1
+            for r in range(known_map.rows)
+            for c in range(known_map.cols)
+            if known_map.state[r][c] == ObservationState.OBSTACLE
+        )
+        new_obstacles = obstacle_count - self._known_obstacle_count
+        self._known_obstacle_count = obstacle_count
+        if new_obstacles > 0 and verbose:
+            print(f"  [OBSTACLES] +{new_obstacles} newly observed obstacle cell(s)")
+
         # 3. Sweep collateral completions
         swept = self.sweep_completions(known_map)
         if swept and verbose:
@@ -1001,8 +1017,18 @@ class SequentialSingleItemAuctioneer:
                 if reauctioned:
                     return
 
-        # 5. Reauction on conflict, otherwise normal auction
-        if self.should_trigger_reauction(agents, known_map):
+        # 5. Reauction on conflict, new high-value task discovery, or newly
+        #    observed obstacles; otherwise normal auction.
+        if new_high_value_tasks and verbose:
+            print(f"  [REAUCTION] Triggered by new high-value tasks "
+                  f"(triage={new_triage}, building={new_bldg})")
+        if new_obstacles > 0 and verbose:
+            print(f"  [REAUCTION] Triggered by {new_obstacles} new obstacle cell(s)")
+        if (
+            new_high_value_tasks
+            or new_obstacles > 0
+            or self.should_trigger_reauction(agents, known_map)
+        ):
             self.trigger_global_reauction(agents, known_map)
         else:
             self.auction(agents, known_map)
