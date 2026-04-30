@@ -3,9 +3,9 @@ import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from maps import KnownMap
-from agents import Event
-from sim_types import EventType
+from src.maps import KnownMap
+from src.agents import Event
+from src.sim_types import EventType
 
 # ---------------------------------------------------------------------------
 # Type aliases

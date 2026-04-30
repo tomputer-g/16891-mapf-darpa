@@ -11,7 +11,7 @@ Map representations for the DARPA exploration simulation.
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from sim_types import AgentType, ObservationState, PATH_SYMBOL  # noqa: F401
+from src.sim_types import AgentType, ObservationState, PATH_SYMBOL  # noqa: F401
 
 
 # ===========================================================================

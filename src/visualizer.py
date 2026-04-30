@@ -13,11 +13,11 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
-from maps import GroundTruthMap, KnownMap
-from sim_types import AgentType, ObservationState
+from src.maps import GroundTruthMap, KnownMap
+from src.sim_types import AgentType, ObservationState
 
 if TYPE_CHECKING:
-    from agents import Agent
+    from src.agents import Agent
 
 # Cycle through these for agent colours; fall back to random HSV beyond len.
 _AGENT_PALETTE = [

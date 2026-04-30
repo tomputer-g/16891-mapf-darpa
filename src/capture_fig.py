@@ -7,13 +7,13 @@ import numpy as np
 import os
 from typing import List
 
-from agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
-from maps import KnownMap, load_new_scenario
-from sim_types import AgentType
-from planner import CBS
-from SSIA.task_allocation import SequentialSingleItemAuctioneer
-from SSIA.main import _update_triage_progress, _post_observation_updates, _do_microstep
-from visualizer import SimulationVisualizer
+from src.agents import Agent, AgentStatus, EventType, GroundAgent, DroneAgent
+from src.maps import KnownMap, load_new_scenario
+from src.sim_types import AgentType
+from src.planner import CBS
+from src.allocators.SSIA.task_allocation import SequentialSingleItemAuctioneer
+from src.allocators.SSIA.main import _update_triage_progress, _post_observation_updates, _do_microstep
+from src.visualizer import SimulationVisualizer
 
 CAPTURE_STEP = 10  # capture at this step (mid-exploration)
 

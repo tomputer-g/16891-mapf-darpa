@@ -12,12 +12,12 @@ import heapq
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-from maps import GroundTruthMap, KnownMap
-from sim_types import AgentStatus, AgentType, EventType, ObservationState
-from tasks import Task
+from src.maps import GroundTruthMap, KnownMap
+from src.sim_types import AgentStatus, AgentType, EventType, ObservationState
+from src.tasks import Task
 
 if TYPE_CHECKING:
-    from planner import CBS
+    from src.planner import CBS
 
 
 # ===========================================================================

@@ -280,8 +280,8 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Generate a random DARPA exploration scenario file."
     )
-    p.add_argument("output", nargs="?", default="instances/generated.txt",
-                   help="Output file path (default: instances/generated.txt)")
+    p.add_argument("output", nargs="?", default="generated/generated.txt",
+                   help="Output file path (default: generated/generated.txt)")
     p.add_argument("--rows",      type=int, default=15)
     p.add_argument("--cols",      type=int, default=15)
     p.add_argument("--drones",    type=int, default=2,  dest="drones")

@@ -11,11 +11,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
-from sim_types import AgentType, ObservationState
+from src.sim_types import AgentType, ObservationState
 
 if TYPE_CHECKING:
-    from agents import Agent
-    from maps import KnownMap
+    from src.agents import Agent
+    from src.maps import KnownMap
 
 
 # ===========================================================================
