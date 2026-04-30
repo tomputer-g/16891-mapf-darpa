@@ -11,13 +11,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from agents import Agent, AgentStatus, DroneAgent, GroundAgent
-from maps import KnownMap, load_new_scenario
-from sim_types import AgentType
-from planner import CBS
-from SSIA.task_allocation import SequentialSingleItemAuctioneer
-from SSIA.main import _update_triage_progress, _post_observation_updates, _do_microstep
-from visualizer import SimulationVisualizer
+from src.agents import Agent, AgentStatus, DroneAgent, GroundAgent
+from src.maps import KnownMap, load_new_scenario
+from src.sim_types import AgentType
+from src.planner import CBS
+from src.allocators.SSIA.task_allocation import SequentialSingleItemAuctioneer
+from src.allocators.SSIA.main import _update_triage_progress, _post_observation_updates, _do_microstep
+from src.visualizer import SimulationVisualizer
 
 
 def _fig_to_pil(fig) -> Image.Image:

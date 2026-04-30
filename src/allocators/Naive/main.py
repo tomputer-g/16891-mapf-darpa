@@ -5,13 +5,13 @@ DARPA Multi-Agent Exploration Simulation — top-level event loop.
 import argparse
 from typing import Optional
 
-from agents import DroneAgent, GroundAgent
-from maps import KnownMap, load_new_scenario
-from planner import CBS
-from sim_types import AgentStatus, AgentType, EventType
-from tasks import TriageTask
-from naive_task_allocation import NaiveTaskAuctioneer
-from visualizer import SimulationVisualizer
+from src.agents import DroneAgent, GroundAgent
+from src.maps import KnownMap, load_new_scenario
+from src.planner import CBS
+from src.sim_types import AgentStatus, AgentType, EventType
+from src.tasks import TriageTask
+from src.allocators.Naive.naive_task_allocation import NaiveTaskAuctioneer
+from src.visualizer import SimulationVisualizer
 
 # Dwell steps required per agent type for triage tasks
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}

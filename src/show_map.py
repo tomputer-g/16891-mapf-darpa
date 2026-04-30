@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 
-from maps import load_new_scenario
+from src.maps import load_new_scenario
 
 
 # ── Palette (matches SimulationVisualizer) ───────────────────────────────────
