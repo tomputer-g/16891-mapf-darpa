@@ -7,7 +7,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 import os
 
-from maps import load_new_scenario
+from src.maps import load_new_scenario
 
 # Palette (matches show_map.py / visualizer.py)
 _GT_FREE         = (0.85, 0.93, 0.85)
