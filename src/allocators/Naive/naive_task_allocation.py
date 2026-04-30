@@ -15,22 +15,22 @@ This module is the live naive baseline used by `main.py`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import List, Optional, Tuple
 
-from src.agents import Agent, DroneAgent
+from src.agents import Agent, AgentStatus, DroneAgent
 from src.maps import KnownMap, ObservationState
 from src.planner import CBS
-from src.sim_types import AgentType, AgentStatus
+from src.sim_types import AgentType
 from src.tasks import ExplorationTask, Task, TriageTask
+from src.allocators.base_task_allocation import BaseTaskAuctioneer
 
-# ===========================================================================
-# Task Auctioneer
-# ===========================================================================
 
-class NaiveTaskAuctioneer:
+class NaiveTaskAuctioneer(BaseTaskAuctioneer):
     """
     Greedy baseline auctioneer used by `main.py`.
+
+    Inherits task registration, frontier/triage discovery, completion sweeping,
+    and basic state accessors from BaseTaskAuctioneer.
 
     EXTEND:
       - Compute per-agent bids (e.g. 1/distance, capability score).
@@ -40,29 +40,11 @@ class NaiveTaskAuctioneer:
       - Bundle tasks into tours (TSP) for efficiency.
     """
 
-    def __init__(self, cbs: Optional[CBS] = None) -> None:
-        self._tasks:      List[Task]            = []
-        self._known_locs: Set[Tuple[int, int]]  = set()   # dedup ExplorationTasks
-        self._triage_locs: Set[Tuple[int, int]] = set()   # dedup TriageTasks
-        self._invest_locs: Set[Tuple[int, int]] = set()   # dedup building investigations
-        self._cbs: Optional[CBS] = cbs
-
     # ------------------------------------------------------------------
-    def register(self, task: Task) -> bool:
-        """
-        Enqueue a task.  ExplorationTasks for already-registered locations
-        are silently dropped (prevents duplicate frontier tasks).
-        Returns True if the task was actually added.
-        """
-        if isinstance(task, ExplorationTask):
-            if task.target_loc in self._known_locs:
-                return False
-            self._known_locs.add(task.target_loc)
-        self._tasks.append(task)
-        return True
-
-    def add_revealed_triage_tasks(self, known_map: "KnownMap", ground_truth) -> int:
-        """Create tasks for revealed objectives and buildings."""
+    # add_revealed_triage_tasks: returns int (total new tasks)
+    # ------------------------------------------------------------------
+    def add_revealed_triage_tasks(self, known_map: KnownMap, ground_truth) -> int:  # type: ignore[override]
+        """Create tasks for revealed objectives and buildings. Returns total new count."""
         new_count = 0
         for loc in ground_truth.objectives:
             r, c = loc
@@ -82,75 +64,6 @@ class NaiveTaskAuctioneer:
                 new_count += 1
         return new_count
 
-    def add_confirmed_building_triage(self, known_map: "KnownMap") -> int:
-        """Create triage tasks for buildings confirmed occupied."""
-        done_investigations: Set[Tuple[int, int]] = set()
-        for t in self._tasks:
-            if (isinstance(t, TriageTask)
-                    and getattr(t, '_is_investigation', False)
-                    and t.completed):
-                done_investigations.add(t.target_loc)
-        new_count = 0
-        for loc in list(self._invest_locs):
-            if loc not in done_investigations:
-                continue
-            r, c = loc
-            if known_map.state[r][c] == ObservationState.OCCUPIED_BUILDING and loc not in self._triage_locs:
-                task = TriageTask(loc, ground_only=True)
-                self._triage_locs.add(loc)
-                self._tasks.append(task)
-                new_count += 1
-        return new_count
-
-    def add_frontier_tasks(self, known_map: "KnownMap") -> int:
-        """
-        Scan the known map for frontier cells — UNKNOWN cells that are
-        4-adjacent to at least one FREE cell — and register an
-        ExplorationTask for each new one found.
-        Returns the number of newly created tasks.
-
-        EXTEND: weight priority by distance to nearest agent, information
-                gain estimate, or strategic importance of the region.
-        """
-        new_count = 0
-        for r in range(known_map.rows):
-            for c in range(known_map.cols):
-                if known_map.state[r][c] != ObservationState.FREE:
-                    continue
-                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    nr, nc = r + dr, c + dc
-                    if (0 <= nr < known_map.rows
-                            and 0 <= nc < known_map.cols
-                            and known_map.state[nr][nc] == ObservationState.UNKNOWN):
-                        if self.register(ExplorationTask((nr, nc))):
-                            new_count += 1
-        return new_count
-
-    # ------------------------------------------------------------------
-    @property
-    def all_complete(self) -> bool:
-        """True only when at least one task exists and all are finished."""
-        return bool(self._tasks) and all(t.completed for t in self._tasks)
-
-    def pending(self) -> List[Task]:
-        """Tasks that are neither completed nor currently assigned."""
-        return [t for t in self._tasks
-                if not t.completed and t.assigned_to is None]
-
-    def sweep_completions(self, known_map: "KnownMap") -> int:
-        """
-        Call check_completion on every unfinished task.  Cells that were
-        observed as collateral while the agent navigated to another target
-        are marked done here, before the next auction, so they are never
-        assigned unnecessarily.
-        Returns the number of tasks newly marked complete.
-        """
-        count = 0
-        for task in self._tasks:
-            if not task.completed and task.check_completion(known_map):
-                count += 1
-        return count
-
     def stats(self) -> str:
         total    = len(self._tasks)
         done     = sum(1 for t in self._tasks if t.completed)
@@ -160,7 +73,7 @@ class NaiveTaskAuctioneer:
         return f"tasks total={total} done={done} assigned={assigned} waiting={waiting}"
 
     # ------------------------------------------------------------------
-    def auction(self, agents: List["Agent"], known_map: "KnownMap") -> None:
+    def auction(self, agents: List[Agent], known_map: KnownMap) -> None:
         """
         Assign pending tasks to idle agents.
 
@@ -184,14 +97,13 @@ class NaiveTaskAuctioneer:
             if not idle_agents:
                 break
 
-            # Filter out drones for ground_only tasks
             eligible = [a for a in idle_agents
                         if not (isinstance(task, TriageTask) and task.ground_only
                                 and a.agent_type != AgentType.GROUND)]
             if not eligible:
                 continue
 
-            def score(a: "t", t: Task = task) -> Tuple[float, float]:
+            def score(a: Agent, t: Task = task) -> Tuple[float, float]:
                 r0, c0 = a.pos
                 r1, c1 = t.target_loc
                 return (t.priority, -(abs(r1 - r0) + abs(c1 - c0)))
@@ -202,10 +114,9 @@ class NaiveTaskAuctioneer:
             winner.assign_task(task)
             print(f"  [AUCTION] Task {task.task_id} -> Agent {winner.id}"
                   f"  target={task.target_loc}")
-        # CBS multi-agent replan for all navigating ground agents
         self._cbs_replan_ground(agents, known_map)
 
-    def _cbs_replan_ground(self, agents: List["Agent"], known_map: "KnownMap") -> None:
+    def _cbs_replan_ground(self, agents: List[Agent], known_map: KnownMap) -> None:  # type: ignore[override]
         """Run CBS jointly for all navigating ground agents to resolve collisions."""
         if self._cbs is None:
             return
