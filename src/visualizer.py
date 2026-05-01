@@ -316,7 +316,11 @@ class SimulationVisualizer:
 
         queue = get_queue(agent.id) or []
         # Drop already-completed tasks from rendering (defensive).
+        # Cap rendered depth to keep the matplotlib artist count bounded; deep
+        # queues (common with full-grid exploration) can choke the GUI loop.
+        _MAX_QUEUE_RENDER = 8
         targets = [t.target_loc for t in queue if not getattr(t, "completed", False)]
+        targets = targets[:_MAX_QUEUE_RENDER]
 
         if len(targets) >= 2:
             queue_line.set_data([c for _, c in targets], [r for r, _ in targets])

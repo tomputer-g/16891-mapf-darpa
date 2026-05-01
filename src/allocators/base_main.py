@@ -17,7 +17,6 @@ from src.maps import KnownMap, load_new_scenario
 from src.planner import CBS
 from src.sim_types import AgentType
 from src.tasks import TriageTask
-from src.visualizer import SimulationVisualizer
 from src.allocators.base_task_allocation import BaseSSIATaskAuctioneer
 
 _TRIAGE_DWELL = {AgentType.GROUND: 2, AgentType.DRONE: 4}
@@ -168,7 +167,11 @@ class SimulationHarness(ABC):
         print(f"  {len(agents)} agent(s)   map {rows}x{cols}   [{path}]")
         print("=" * 60)
 
-        vis = SimulationVisualizer(ground_truth) if use_vis else None
+        if use_vis:
+            from src.visualizer import SimulationVisualizer
+            vis = SimulationVisualizer(ground_truth)
+        else:
+            vis = None
 
         for agent in agents:
             agent.observe(ground_truth, known_map)
@@ -179,11 +182,17 @@ class SimulationHarness(ABC):
                 statuses = "  ".join(
                     f"A{a.id}@{a.pos}[{a.status.name[0]}]" for a in agents
                 )
-                print(f"\n--- Step {step:3d}  {statuses}  {auctioneer.stats()} ---")
+                print(f"\n--- Step {step:3d}  {statuses}  {auctioneer.stats()} ---", flush=True)
 
             if vis is not None:
-                vis.update(known_map, agents, step, auctioneer.stats(),
-                           auctioneer=auctioneer)
+                try:
+                    vis.update(known_map, agents, step, auctioneer.stats(),
+                               auctioneer=auctioneer)
+                except Exception:
+                    import traceback, sys
+                    print("[VIS ERROR] Disabling visualizer:", file=sys.stderr, flush=True)
+                    traceback.print_exc()
+                    vis = None
 
             moved_any = self._do_microstep(
                 agents, ground_truth, known_map, auctioneer, verbose
@@ -204,8 +213,14 @@ class SimulationHarness(ABC):
 
             if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
                 if vis is not None:
-                    vis.update(known_map, agents, step, auctioneer.stats(),
-                               auctioneer=auctioneer)
+                    try:
+                        vis.update(known_map, agents, step, auctioneer.stats(),
+                                   auctioneer=auctioneer)
+                    except Exception:
+                        import traceback, sys
+                        print("[VIS ERROR] Disabling visualizer:", file=sys.stderr)
+                        traceback.print_exc()
+                        vis = None
                 print(f"\n[DONE] All {auctioneer.stats()} — finished in {step + 1} steps.")
                 break
 
