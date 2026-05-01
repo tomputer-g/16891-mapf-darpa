@@ -116,6 +116,14 @@ class SequentialSingleItemAuctioneer(BaseSSIATaskAuctioneer):
             self._agent_queue_reward[agent.id] = 0.0
             self._agent_queue_end[agent.id] = None
 
+    def get_agent_queue(self, agent_id: int) -> List[Task]:
+        """Public read-only view of an agent's task queue (head = active task).
+
+        Returns an empty list if the agent has no queue yet. Used by the
+        visualizer to draw queued task targets.
+        """
+        return list(self._agent_queues.get(agent_id, ()))
+
     def _queue_end_pos(self, agent: Agent) -> Tuple[int, int]:
         """Position from which the agent would start its next task.
 

@@ -182,7 +182,8 @@ class SimulationHarness(ABC):
                 print(f"\n--- Step {step:3d}  {statuses}  {auctioneer.stats()} ---")
 
             if vis is not None:
-                vis.update(known_map, agents, step, auctioneer.stats())
+                vis.update(known_map, agents, step, auctioneer.stats(),
+                           auctioneer=auctioneer)
 
             moved_any = self._do_microstep(
                 agents, ground_truth, known_map, auctioneer, verbose
@@ -203,7 +204,8 @@ class SimulationHarness(ABC):
 
             if auctioneer.all_complete and all(a.status == AgentStatus.IDLE for a in agents):
                 if vis is not None:
-                    vis.update(known_map, agents, step, auctioneer.stats())
+                    vis.update(known_map, agents, step, auctioneer.stats(),
+                               auctioneer=auctioneer)
                 print(f"\n[DONE] All {auctioneer.stats()} — finished in {step + 1} steps.")
                 break
 

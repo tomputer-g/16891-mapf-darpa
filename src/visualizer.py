@@ -221,6 +221,9 @@ class SimulationVisualizer:
         task_dot, = self.ax.plot(
             [], [], "*", color=color, markersize=16,
             markeredgecolor="black", markeredgewidth=0.8, zorder=5)
+        # Thin connector polyline through queued task targets (head -> tail).
+        queue_line, = self.ax.plot(
+            [], [], ":", color=color, linewidth=1.2, alpha=0.7, zorder=4)
         agent_dot, = self.ax.plot(
             [], [], marker, color=color, markersize=msize,
             markeredgecolor="black", markeredgewidth=1.0, zorder=6)
@@ -233,6 +236,9 @@ class SimulationVisualizer:
             "color":     color,
             "path":      path_line,
             "target":    task_dot,
+            "queue_line": queue_line,
+            # Numbered text labels for queued tasks; created on demand.
+            "queue_labels": [],
             "dot":       agent_dot,
             "label":     label,
         }
@@ -245,10 +251,19 @@ class SimulationVisualizer:
         agents:     List[Agent],
         step:       int,
         task_stats: str,
+        auctioneer = None,
     ) -> None:
-        """Redraw the display for one simulation step."""
+        """Redraw the display for one simulation step.
+
+        If ``auctioneer`` is provided and exposes ``get_agent_queue(agent_id)``
+        (e.g. SSICA), the queued task targets for each agent are rendered as
+        numbered markers connected by a thin dotted polyline in the agent's
+        colour.
+        """
         self._update_knowledge_layer(known_map)
         self._update_fog_layer(known_map)
+
+        get_queue = getattr(auctioneer, "get_agent_queue", None)
 
         legend_dirty = False
         for agent in agents:
@@ -277,6 +292,9 @@ class SimulationVisualizer:
             arts["dot"].set_data([agent.pos[1]], [agent.pos[0]])
             arts["label"].set_position((agent.pos[1], agent.pos[0]))
 
+            # Queued tasks (SSICA only)
+            self._update_agent_queue(agent, arts, get_queue)
+
         if legend_dirty:
             self._build_legend(agents)
 
@@ -284,6 +302,43 @@ class SimulationVisualizer:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
         plt.pause(0.3)
+
+    def _update_agent_queue(self, agent: "Agent", arts: dict, get_queue) -> None:
+        """Render numbered queue markers + connector polyline for one agent."""
+        queue_line = arts["queue_line"]
+        labels: list = arts["queue_labels"]
+
+        if get_queue is None:
+            queue_line.set_data([], [])
+            for txt in labels:
+                txt.set_text("")
+            return
+
+        queue = get_queue(agent.id) or []
+        # Drop already-completed tasks from rendering (defensive).
+        targets = [t.target_loc for t in queue if not getattr(t, "completed", False)]
+
+        if len(targets) >= 2:
+            queue_line.set_data([c for _, c in targets], [r for r, _ in targets])
+        else:
+            queue_line.set_data([], [])
+
+        # Reuse / extend label artists.
+        color = arts["color"]
+        for i, (r, c) in enumerate(targets):
+            if i >= len(labels):
+                labels.append(self.ax.text(
+                    0, 0, "", color="white", fontsize=8, fontweight="bold",
+                    ha="center", va="center", zorder=8,
+                    bbox=dict(boxstyle="circle,pad=0.18",
+                              facecolor=color, edgecolor="black",
+                              linewidth=0.6, alpha=0.85)))
+            txt = labels[i]
+            txt.set_position((c, r))
+            txt.set_text(str(i + 1))
+        # Hide unused leftover labels.
+        for j in range(len(targets), len(labels)):
+            labels[j].set_text("")
 
     def finalize(self, task_stats: str) -> None:
         """Mark simulation complete and block until the window is closed."""
